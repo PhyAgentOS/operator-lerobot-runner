@@ -28,7 +28,7 @@ dependencies = [
     "forge-common==1.0.1",
     "forge-policy==1.0.1",
     "forge-tool[dora]==1.0.0",
-    "dora-rs==0.4.1",
+    "dora-rs==1.1.0",
 ]
 
 [project.optional-dependencies]
