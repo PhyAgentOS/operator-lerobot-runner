@@ -24,7 +24,7 @@ dependencies = [
     "packaging>=24.0",
     "tqdm>=4.65.0",
 
-    "forge-msgs==1.2.0",
+    "forge-msgs==2.0.0",
     "forge-common==1.0.1",
     "forge-policy==1.0.1",
     "forge-tool[dora]==1.0.0",
