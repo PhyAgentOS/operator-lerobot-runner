@@ -9,6 +9,35 @@ LeRobot checkpoint ────────────────────�
 
 推理始终加载完整的 `pretrained_model/` 目录（权重、配置和 processor），而不是单独的权重或统计文件。
 
+## Node、Endpoint 与 Tool API / Capability summary
+
+| 项目 | 当前实现 |
+| --- | --- |
+| 生产 Node | 1 个推理 Node：`lerobot infer`；onedir 入口 `dist/lerobot_infer/lerobot_infer`，单文件 `dist/onefile/lerobot_infer`；`infer-once`、`convert` 是离线 CLI，不另计 Node |
+| Tool 支持 | 可选 provider 模式：推理配置 `mode: session_endpoint`；默认 `dora_plain` 不注册 Endpoint |
+| Endpoint 数 | provider 模式为 1：`policy.runner`；plain 模式为 0 |
+| operation 数 | provider 模式为 1：`serve`（Session，可 stop、可查状态，最大并发 1） |
+| 直接 HTTP Tool API | 0；`tool_in/tool_out` 通过 Dora 接入 Gateway |
+| Gateway Tool 数 | 由 Skill/Gateway `tools.specs` 决定，仓库不固定外部 Tool ID |
+
+调用映射为 `<tool_id from tools.specs> -> policy.runner / serve -> lerobot infer`。
+模型在 Node 内加载；会话管理常驻策略服务，episode 边界仍由数据平面的 PolicyCommand 管理。
+
+Session 使用 stop，不应替换成 Action cancel。对外调用通过 Gateway
+`POST /tools/{tool_id}:invoke`，随后读取 invocation 状态/结果；停止使用
+`POST /invocations/{invocation_id}/stop`。HTTP 路由属于 Gateway，Node 内的推理服务接口不算 Tool API。
+
+Kai0 与 LeRobot 使用相同 `policy.runner` Endpoint ID；同一 Gateway 中该 ID 只有一个 current instance，
+两者应作为部署候选选择，不能仅用不同 Node ID 就假定能同时成为独立路由。
+
+实现与启用条件：[descriptor](inference/session_endpoint.py)、[runner](inference/session_runner.py)、
+[配置校验](inference/config.py)、[推理入口](inference/main.py)。
+Gateway 当前源码实现 Session，但历史二进制可能不同，需核对配套版本与依赖锁。
+
+兼容性：当前依赖声明为 `forge-msgs==1.2.0`、`forge-common==1.0.1`、`forge-policy==1.0.1`、`forge-tool[dora]==1.0.0`、`dora-rs==0.4.1`；以 [pyproject.toml](pyproject.toml) 与 [uv.lock](uv.lock) 为准。 这些声明不构成跨版本互操作保证；使用制品时还需核对 build revision 和 Skill lock。
+
+后续修改 Node 入口、Endpoint 或 Tool API 时，请同步更新本节及对应配置/契约，遵循 [Node README 规范](https://github.com/PhyAgentOS/forge/blob/master/CONTRIBUTING.md#node-readme-contract)。
+
 ## 快速开始
 
 要求：Linux x86_64、Python 3.12、[uv](https://docs.astral.sh/uv/)；GPU 推理需要兼容 lock 中稳定版 CUDA 13 Torch wheel 的 NVIDIA 驱动。Torch、TorchVision 和 CUDA 用户态依赖由 `uv.lock` 唯一固定，不再使用 nightly/cu128 专用索引或手写 NVIDIA wheel 列表。所有依赖均从公共 PyPI 索引解析，无需访问内部仓库。
