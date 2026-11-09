@@ -14,6 +14,7 @@ from lerobot_inference.inference.policies.act import (
 )
 from lerobot_inference.inference.policies.base import LerobotPolicyAdapter
 from lerobot_inference.inference.policies.diffusion import DiffusionPolicyAdapter
+from lerobot_inference.inference.policies.g05 import G05Adapter
 from lerobot_inference.inference.policies.lingbot_va import LingBotVAAdapter
 from lerobot_inference.inference.policies.pi05 import (
     PI05AsyncRTCPolicyAdapter,
@@ -44,6 +45,9 @@ _POLICY_ALIASES: dict[str, str] = {
     "lingbot_va": "lingbot_va",
     "lingbot-va": "lingbot_va",
     "LingBotVA": "lingbot_va",
+    "g05": "g05",
+    "G05": "g05",
+    "g0.5": "g05",
 }
 
 # Implemented adapters keyed by normalized LeRobot policy type.
@@ -446,6 +450,38 @@ def _create_lingbot_va(policy_config: dict[str, Any], pretrained_path: str) -> L
 
 
 register_policy_type("lingbot_va", _create_lingbot_va)
+
+
+def _g05_policy_config_overrides(
+    policy_config: dict[str, Any],
+) -> dict[str, Any]:
+    # runtime_system 选 system1（只出动作）或 system2（先出 CoT 再出动作，
+    # 需 checkpoint predict_cot=true）。n_action_steps 由 checkpoint 后处理器
+    # 固定，不在此透传（见 G05Adapter）。
+    runtime_keys = ("runtime_system",)
+    return {key: policy_config[key] for key in runtime_keys if key in policy_config}
+
+
+def _create_g05(policy_config: dict[str, Any], pretrained_path: str) -> LerobotPolicyAdapter:
+    if "n_action_steps" in policy_config:
+        raise ValueError(
+            "policy.n_action_steps is fixed by the G0.5 checkpoint postprocessor; remove it"
+        )
+    camera_aliases = list(policy_config.get("camera_names") or [])
+    adapter = G05Adapter.from_pretrained(
+        pretrained_path,
+        device=policy_config.get("device"),
+        instruction=str(policy_config.get("instruction", "")),
+        expected_image_keys=_expected_image_keys(policy_config, camera_aliases),
+        policy_config_overrides=_g05_policy_config_overrides(policy_config),
+    )
+    state_dim, action_dim = _act_runtime_dimensions(policy_config)
+    if state_dim is not None and action_dim is not None:
+        adapter.validate_io_dimensions(state_dim, action_dim)
+    return adapter
+
+
+register_policy_type("g05", _create_g05)
 
 
 def resolve_policy_pretrained_path(policy_config: dict[str, Any]) -> str:

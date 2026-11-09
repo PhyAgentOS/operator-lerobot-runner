@@ -20,6 +20,7 @@ hiddenimports: list = []
 for pkg in (
     "torch",
     "torchvision",
+    "torchcodec",
     "triton",
     "transformers",
     "lerobot",
@@ -74,23 +75,6 @@ if _include and os.path.isdir(_include):
 if _platinclude and os.path.isdir(_platinclude) and _platinclude != _include:
     datas.append((_platinclude, _include_dest))
 
-# Bundle NVIDIA wheel .so into root (skip libcuda — from host driver)
-_site = Path(sysconfig.get_paths()["purelib"])
-_nvidia = _site / "nvidia"
-if _nvidia.is_dir():
-    seen: set[str] = set()
-    for so in _nvidia.glob("**/lib/*.so*"):
-        if not so.is_file():
-            continue
-        name = so.name
-        if name == "libcuda.so" or name.startswith("libcuda.so."):
-            continue
-        real = str(so.resolve())
-        if real in seen:
-            continue
-        seen.add(real)
-        binaries.append((str(so), "."))
-
 runtime_hooks = [
     str(_spec_dir / "pyi_rth_nvidia_preload.py"),
     str(_spec_dir / "pyi_rth_torch_compile.py"),
@@ -114,6 +98,19 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+# CUDA libraries live once under nvidia/*/lib (torch RPATH and pyi_rth_nvidia_preload load them
+# from there). Drop any top-level copy the dependency analysis adds for the same file name.
+_nvidia_names = {
+    os.path.basename(dest)
+    for dest, _src, _kind in a.binaries
+    if dest.replace(os.sep, "/").startswith("nvidia/")
+}
+a.binaries = [
+    entry
+    for entry in a.binaries
+    if not (os.path.dirname(entry[0]) == "" and os.path.basename(entry[0]) in _nvidia_names)
+]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

@@ -1,0 +1,42 @@
+# G0.5 推理配置模板（lerobot 0.7 自带的 policies/g05，RoboTwin 2.0 embodiment）
+#
+#   uv run lerobot infer-once --config config/inference/g05.yaml
+#   uv run lerobot infer      --config config/inference/g05.yaml
+#
+# 官方 checkpoint：lerobot/g05_robotwin20（System1，flow 动作头，chunk 32）。
+# 每次推理产出 32 步 chunk，取前 8 步逐步吐出。n_action_steps 由 checkpoint
+# 的逐步反归一化后处理器固定，不能在这里覆盖，写了会直接报错。
+
+# 动作关节：RoboTwin aloha-agilex 双臂，14 维 qpos（每臂 6 关节 + 夹爪 joint7）。
+# 名字必须和 robotwin_benchmark 的 proprio_state 逐字一致（按名查表）。
+# 预处理会按 robotwin 的 slot 映射把 14 维投影到 20 维，后处理再投回 14 维。
+joints:
+  - {name: fl_joint1, mode: position}
+  - {name: fl_joint2, mode: position}
+  - {name: fl_joint3, mode: position}
+  - {name: fl_joint4, mode: position}
+  - {name: fl_joint5, mode: position}
+  - {name: fl_joint6, mode: position}
+  - {name: fl_joint7, mode: position}
+  - {name: fr_joint1, mode: position}
+  - {name: fr_joint2, mode: position}
+  - {name: fr_joint3, mode: position}
+  - {name: fr_joint4, mode: position}
+  - {name: fr_joint5, mode: position}
+  - {name: fr_joint6, mode: position}
+  - {name: fr_joint7, mode: position}
+
+policy:
+  type: g05
+  policy_id: g05_robotwin
+  auto_start: false
+  instruction: ""          # 运行时由 set_instruction 覆盖
+  device: cuda
+  runtime_system: system1
+  pretrained_path: /path/to/lerobot_g05_robotwin20
+
+image_inputs:
+  # 左键 = dora 通道名；右值 = checkpoint 特征名去掉 observation.images. 前缀
+  image/head:        head_camera
+  image/left_wrist:  left_camera
+  image/right_wrist: right_camera
