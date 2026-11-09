@@ -138,6 +138,14 @@ echo "==> Building lerobot_infer ..."
 DIST_DIR="${ROOT}/dist/lerobot_infer"
 DIST_BIN="${DIST_DIR}/lerobot_infer"
 
+# PyInstaller can leave links to libraries it did not collect (e.g. _internal/libcudart.so ->
+# libcudart.so.12, whose real file lives under nvidia/cuda_runtime/lib). Nothing loads them,
+# but the PAOS node installer rejects any dangling link in a directory_tar_gz archive.
+while IFS= read -r -d '' _link; do
+  echo "==> removing dangling symlink: ${_link#"${DIST_DIR}/"} -> $(readlink "${_link}")"
+  rm -f "${_link}"
+done < <(find "${DIST_DIR}" -xtype l -print0)
+
 if [[ ! -x "${DIST_BIN}" ]]; then
   echo "ERROR: 构建失败，未找到 ${DIST_BIN}" >&2
   exit 1
