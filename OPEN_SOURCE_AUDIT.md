@@ -58,34 +58,31 @@ as documented in `THIRD_PARTY_NOTICES.md`.
 
 ## Known limitations
 
-- `torch 2.11.0` is affected by PYSEC-2025-194 / CVE-2025-3000
-  (`torch.jit.script` memory corruption). LeRobot 0.6.1 constrains
-  `torch<2.12.0`, so an upgrade is not possible without breaking the
-  dependency contract, and the torch pin is aligned with `lerobot_trainer`
-  and validated on RTX 5060 hardware. The repository does not use
-  `torch.jit.script` (compilation uses `torch.compile`), loads checkpoints
-  with `weights_only=True`, and is intended to run only trusted model
-  weights.
-- `transformers 5.5.4` is affected by CVE-2026-9856 (path traversal in
-  tokenizer/processor `save_pretrained()` via malicious `chat_template`
-  keys from a Hub repository). LeRobot 0.6.1 constrains
-  `transformers<5.6.0`. The repository loads pretrained tokenizers and
-  processors read-only and does not save tokenizers from untrusted
-  repositories.
-- `setuptools 81.0.0` is affected by PYSEC-2026-3447 (macOS APFS/HFS+ file
-  name normalization bypass when packing sdists). LeRobot 0.6.1 constrains
-  `setuptools<82.0.0`. The project publishes no source distribution and
-  releases only on Linux x86_64; the exposure is not applicable to this
-  release.
-- `accelerate 1.14.0` is affected by CVE-2026-69112 (path traversal and
-  denial of service via a malicious `weight_map` during checkpoint
-  loading). No fixed release exists yet — the upstream fix is an
-  unreleased commit and 1.14.0 is the latest PyPI version — so an upgrade
-  is not possible. The runner loads only publisher-provided policy
-  checkpoints from local paths and never consumes untrusted Hub-hosted
-  weight maps, so the exposure is not applicable to this deployment.
-  Remove this ignore once a fixed accelerate release is available and
+The accepted pip-audit IDs are listed in `.github/pip-audit-ignore.txt`;
+CI fails on any vulnerability not listed there.
+
+- `torch 2.9.1` is affected by several advisories, among them
+  PYSEC-2025-194 (`torch.jit.script` memory corruption), PYSEC-2025-195
+  (`torch.lstm_cell`), PYSEC-2026-2286 / PYSEC-2026-1856 (`weights_only`
+  unpickler bypass) and PYSEC-2026-139 (pt2 loading). The fixes need
+  torch >= 2.10, whose default PyPI wheels are CUDA 13 builds that do not
+  run on the supported NVIDIA driver 550 hosts, so torch stays pinned to
+  the cu12x-compatible 2.9.1. The runner does not use `torch.jit.script`
+  or pt2 archives and is intended to load only trusted,
+  publisher-provided policy checkpoints.
+- `accelerate 1.14.0` is affected by PYSEC-2026-3804 / CVE-2026-69112
+  (path traversal and denial of service via a malicious `weight_map`
+  during checkpoint loading). No fixed release exists yet. The runner
+  loads only publisher-provided policy checkpoints from local paths and
+  never consumes untrusted Hub-hosted weight maps. Remove this ignore
+  once a fixed accelerate release is available and
   `uv lock --upgrade-package accelerate` succeeds.
+- `pillow 12.3.0` is affected by the 39 advisories that are fixed in
+  pillow 13.0.0. `forge-msgs` (every release from 1.2.0 through 2.0.0)
+  requires `pillow<13`, so the upgrade is blocked upstream. The runner
+  only encodes and decodes camera frames produced by the local simulator
+  or robot and does not open untrusted image files. Remove these ignores
+  once forge-msgs allows pillow 13.
 - CI and this audit do not command physical hardware. Runtime deployment is
   only supported on trusted networks; Dora dataflows must not be exposed
   directly to the public internet (see `SECURITY.md`).

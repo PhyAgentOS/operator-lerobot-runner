@@ -44,10 +44,9 @@ class _RTCActionQueue(ActionQueue):
         self._epoch = 0
 
     def clear(self) -> None:
+        # lerobot>=0.7 的基类 clear 还会清空 task/provenance 标签队列和游标。
+        super().clear()
         with self.lock:
-            self.queue = None
-            self.original_queue = None
-            self.last_index = 0
             self._epoch += 1
 
     def snapshot(self) -> _QueueSnapshot:
@@ -81,11 +80,15 @@ class _RTCActionQueue(ActionQueue):
             if snapshot.epoch != self._epoch:
                 return None
             consumed_during_inference = max(0, self.last_index - snapshot.action_index)
+            # lerobot>=0.7：每个动作带生成它的 task 标签，并与 provenance 队列逐位对齐。
+            # 指令切换由适配器 reset 处理，这里不打标签；provenance 清空以保持长度一致。
             self._replace_actions_queue(
                 original_actions,
                 processed_actions,
                 consumed_during_inference,
+                None,
             )
+            self._provenance_queue = []
             self._epoch += 1
             return consumed_during_inference
 

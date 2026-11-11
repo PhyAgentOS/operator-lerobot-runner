@@ -7,12 +7,16 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    # 默认 PyPI 索引提供当前稳定 CUDA 13 构建；具体版本由 uv.lock 唯一固定。
-    "torch",
-    "torchvision",
+    # PyPI 默认的 torch>=2.10 是 CUDA 13 构建，Ubuntu 20.04 + NVIDIA 驱动 550
+    # （CUDA 12.4）跑不起来；固定到 2.9.1（PyPI 上的 cu128 构建，含 sm_80/86/90/120）。
+    "torch==2.9.1",
+    "torchvision==0.24.1",
 
-    "lerobot[pi,smolvla,vla-jepa]==0.6.1",
-    "transformers>=5.4.0,<5.6.0",
+    # lerobot 0.7 自带 G0.5（policies/g05）；transformers 范围跟随 lerobot[g05]。
+    # g05 预处理的 render_runtime_messages 经 lerobot.datasets 导入 recipe，而该包
+    # __init__ 强制要求 datasets/av，lerobot[g05] 没声明，这里补上 dataset extra。
+    "lerobot[dataset,fastwam,g05,pi,smolvla,vla-jepa,lingbot-va]==0.7.0",
+    "transformers>=5.22.0,<5.23.0",
 
     "numpy==2.2.6",
     "einops>=0.7.0",

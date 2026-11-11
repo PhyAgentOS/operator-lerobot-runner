@@ -1,0 +1,64 @@
+# FastWAM 推理配置模板（lerobot 0.7 自带的 policies/fastwam，LIBERO 双相机）
+#
+#   HF_HUB_OFFLINE=1 uv run lerobot infer-once --config config/inference/fastwam.yaml
+#   HF_HUB_OFFLINE=1 uv run lerobot infer      --config config/inference/fastwam.yaml
+#
+# 参考 checkpoint：fastwam_libero_uncond_2cam224（state 8 维，action 7 维）。
+# FastWAM 全程离线加载，三个路径都必须是本地目录：
+#   pretrained_path    策略 checkpoint（config.json、model.safetensors、前后处理器）
+#   wan_diffusers_path Wan-AI/Wan2.2-TI2V-5B-Diffusers 快照（含 vae/ 与 text_encoder/）
+#   tokenizer_path     google/umt5-xxl 分词器
+#
+# 下面的 state/action 名称只用于冒烟。接入 PaOS 真机前，必须按训练数据确认并
+# 替换名称、语义、单位与顺序；checkpoint 本身只提供维度，不提供关节名。
+
+joints:
+  - { name: action_0, mode: position, unit: normalized }
+  - { name: action_1, mode: position, unit: normalized }
+  - { name: action_2, mode: position, unit: normalized }
+  - { name: action_3, mode: position, unit: normalized }
+  - { name: action_4, mode: position, unit: normalized }
+  - { name: action_5, mode: position, unit: normalized }
+  - { name: gripper, mode: position, unit: normalized }
+
+state_joints:
+  - state_0
+  - state_1
+  - state_2
+  - state_3
+  - state_4
+  - state_5
+  - state_6
+  - state_7
+
+policy:
+  type: fastwam
+  policy_id: fastwam_libero
+  auto_start: false
+
+  pretrained_path: /path/to/fastwam_libero_uncond_2cam224
+  wan_diffusers_path: /path/to/Wan2.2-TI2V-5B-Diffusers
+  tokenizer_path: /path/to/google/umt5-xxl
+
+  # 运行时由 set_instruction 覆盖；单次推理时填当前任务在训练数据中的原始文本。
+  instruction: pick up the object and place it at the target location
+
+  device: cuda:0
+  # 模型权重精度：bfloat16 / float16 / float32。lerobot 0.7 已废弃 torch_dtype，
+  # 旧配置里的 torch_dtype 会被自动转成 dtype 并打印警告。
+  dtype: bfloat16
+  use_amp: false
+  n_action_steps: 10
+  num_inference_steps: 10
+  inference_seed: 42
+  rand_device: cpu
+  text_cfg_scale: 1.0
+  negative_prompt: ""
+  sigma_shift: null
+  tiled: false
+
+# FastWAM 按 feature 名排序后沿宽度拼接各路图像；路数和名称必须与 checkpoint 完全一致。
+# 左键 = dora 通道名；右值 = checkpoint 特征名去掉 observation.images. 前缀。
+image_inputs:
+  image/camera_0: image
+  image/camera_1: image2
