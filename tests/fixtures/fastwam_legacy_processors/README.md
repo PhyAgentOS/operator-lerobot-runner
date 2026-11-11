@@ -1,0 +1,1 @@
+Processor metadata and small normalization statistics from ZibinDong/fastwam_libero_uncond_2cam224 at revision a784645f9ce367ba6953dd20a7a7f0310c85747c. No model weights. These reproduce the legacy VISUAL=MEAN_STD checkpoint contract used to test the LeRobot 0.7.0 VAE boundary.

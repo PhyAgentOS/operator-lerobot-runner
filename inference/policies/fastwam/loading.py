@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
-from typing import Iterator
 
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies.pretrained import PreTrainedPolicy
@@ -15,7 +15,7 @@ _WAN_SOURCE_LOCK = Lock()
 
 @contextmanager
 def _local_wan_vae_source(path: str | Path) -> Iterator[None]:
-    """Point LeRobot 0.6.1's fixed Wan VAE source at a validated local snapshot."""
+    """Point LeRobot 0.7.0's fixed Wan VAE source at a validated local snapshot."""
     from lerobot.policies.fastwam.wan import components
 
     local_path = str(Path(path).expanduser().resolve())

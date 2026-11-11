@@ -512,13 +512,23 @@ def _fastwam_policy_config_overrides(policy_config: dict[str, Any]) -> dict[str,
             raise ValueError(f"policy.{key} must be a boolean")
         overrides[key] = value
 
+    # LeRobot 0.7 FastWAMConfig uses `dtype`; it nulls `torch_dtype` with only a
+    # FutureWarning, which would silently keep bfloat16 and disable AMP.
+    dtype_key = "dtype" if "dtype" in policy_config else None
     if "torch_dtype" in policy_config:
-        dtype = str(policy_config["torch_dtype"])
+        if dtype_key is not None:
+            raise ValueError("policy.torch_dtype is deprecated; set only policy.dtype")
+        logger.warning(
+            "policy.torch_dtype is deprecated for FastWAM; translating to policy.dtype"
+        )
+        dtype_key = "torch_dtype"
+    if dtype_key is not None:
+        dtype = str(policy_config[dtype_key]).removeprefix("torch.")
         if dtype not in {"bfloat16", "float16", "float32"}:
             raise ValueError(
-                "policy.torch_dtype must be one of: bfloat16, float16, float32"
+                f"policy.{dtype_key} must be one of: bfloat16, float16, float32"
             )
-        overrides["torch_dtype"] = dtype
+        overrides["dtype"] = dtype
     return overrides
 
 

@@ -8,7 +8,7 @@ import sys
 import sysconfig
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
 _spec_dir = Path(os.path.dirname(os.path.abspath(SPEC)))
 _root_dir = _spec_dir.parent
@@ -23,6 +23,9 @@ for pkg in (
     "torchcodec",
     "triton",
     "transformers",
+    # FastWAM / LingBot-VA build their Wan VAE via diffusers.AutoencoderKLWan;
+    # lerobot gates that import on find_spec + dist metadata, so collect both.
+    "diffusers",
     "lerobot",
     "safetensors",
     "einops",
@@ -40,6 +43,11 @@ for pkg in (
     except Exception:
         pass
 
+# diffusers checks these dists via importlib.metadata at import time
+# (dependency_versions_check.py); requests has no dist-info otherwise.
+for pkg in ("requests", "filelock", "numpy"):
+    datas += copy_metadata(pkg)
+
 hiddenimports += collect_submodules("lerobot_inference")
 hiddenimports += collect_submodules("forge_msgs")
 hiddenimports += collect_submodules("forge_common")
@@ -52,6 +60,9 @@ hiddenimports += [
     "lerobot_inference.inference.run_once",
     "lerobot_inference.inference.compile_utils",
     "lerobot_inference.inference.policies.act",
+    "lerobot_inference.inference.policies.fastwam",
+    "lerobot.policies.fastwam.modeling_fastwam",
+    "diffusers.models.autoencoders.autoencoder_kl_wan",
     "lerobot_inference.inference.policies.pi05",
     "lerobot_inference.inference.policies.registry",
     "torch._dynamo",

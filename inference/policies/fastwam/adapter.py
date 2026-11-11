@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import nullcontext
 from functools import partial
-import json
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +13,6 @@ import torch
 from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.utils import prepare_observation_for_inference
 from lerobot.processor import PolicyProcessorPipeline
-
 from lerobot_inference.inference.observation import action_tensor_to_numpy
 from lerobot_inference.inference.policies.base import LerobotPolicyAdapter
 from lerobot_inference.inference.policies.loader import load_policy_bundle
@@ -25,9 +24,10 @@ _IMAGE_KEY_PREFIX = "observation.images."
 
 
 def _fastwam_preprocessor_overrides(checkpoint: Path) -> dict[str, Any]:
-    """Keep RGB in [0, 1] until LeRobot 0.6.1's Wan VAE encode boundary.
+    """Keep RGB in [0, 1] until LeRobot 0.7.0's Wan VAE encode boundary.
 
-    Older converted checkpoints saved VISUAL=MEAN_STD with mean/std=0.5.
+    FastWAM maps [0, 1] to [-1, 1] inside the model. Older converted
+    checkpoints saved VISUAL=MEAN_STD with mean/std=0.5.
     Replaying that step would normalize twice, feeding [-3, 1] into the VAE.
     Override only VISUAL in memory, preserving checkpoint statistics and files.
     """
@@ -221,12 +221,8 @@ class FastWAMPolicyAdapter(LerobotPolicyAdapter):
     def _autocast_context(self):
         if self._device.type != "cuda" or not bool(self._policy.config.use_amp):
             return nullcontext()
-        dtype_name = str(getattr(self._policy.config, "torch_dtype", "bfloat16"))
-        dtype = {
-            "bfloat16": torch.bfloat16,
-            "float16": torch.float16,
-        }.get(dtype_name)
-        if dtype is None:
+        dtype = getattr(self._policy.config, "dtype", None)
+        if dtype not in (torch.bfloat16, torch.float16):
             return nullcontext()
         return torch.autocast(device_type="cuda", dtype=dtype)
 
