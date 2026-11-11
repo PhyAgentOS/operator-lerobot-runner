@@ -4,7 +4,8 @@
   "changes": [
     "Upgrade inference package and Policy/Tool runtime dependencies.",
     "Synchronize root source version and CI/build defaults.",
-    "Synchronize English/Chinese root README guidance and frozen dependencies."
+    "Synchronize English/Chinese root README guidance and frozen dependencies.",
+    "Update only certifi and urllib3 to compatible security-fixed versions; retain remaining security blockers explicitly."
   ],
   "software_tests": {
     "log": "tests.log",
@@ -58,5 +59,19 @@
   "runtime_missing": "CPU software tests do not cover actual model weights/GPU execution; production model Dora and Gateway chain are pending.",
   "acceptance": "Pending final platform artifacts, applicable hardware/model execution and rollback/sustained-run gates.",
   "pillow_dependency": "Node locks currently resolve published Forge Msgs 2.0.0. Security audit remains dependent on Forge PR #3 and a published security-fixed Msgs release; no vulnerability suppression was added.",
-  "gitlab_synchronization": "Not started; follows full acceptance."
+  "gitlab_synchronization": "Not started; follows full acceptance.",
+  "additional_audit_findings": {
+    "snapshot_date": "2026-11-11",
+    "updated_compatible_patches": {
+      "certifi": "2026.10.18",
+      "urllib3": "2.8.0"
+    },
+    "pending": {
+      "filelock": "Audit fix is 4.2.1 (major version change; model-stack compatibility not established).",
+      "setuptools": "Audit fix is 84.1.0 (major version change; packaging compatibility not established).",
+      "transformers": "5.5.4 advisory has no fix version in this audit output.",
+      "pillow": "Requires the Msgs/Pillow upstream fix and release."
+    },
+    "existing_audit_waivers": "Existing workflow ignores were not extended."
+  }
 }
