@@ -13,7 +13,48 @@
     ]
   },
   "dora_cli": "1.0.1",
-  "runtime_records": [],
+  "runtime_records": [
+    {
+      "repo": "operator-lerobot-runner",
+      "entry": "lerobot-infer",
+      "mode": "chain",
+      "command": [
+        "${WORKSPACE}/.test-env/bin/dora",
+        "run",
+        "${WORKSPACE}/validation/forge2/runtime-blocked/lerobot-infer/chain/dataflow.yaml",
+        "--stop-after",
+        "4s"
+      ],
+      "includes_gateway": true,
+      "exit_code": 1,
+      "passed": false,
+      "status": "blocked / not accepted",
+      "elapsed_seconds": 3.752,
+      "error": null,
+      "scope": "Negative prerequisite diagnostic with unavailable local hardware endpoints, no physical actuation or remote SSH, and no model downloads. Not a successful node-operation or compatibility result.",
+      "log_file": "validation/forge2/runtime-blocked/lerobot-infer/chain/dora.log"
+    },
+    {
+      "repo": "operator-lerobot-runner",
+      "entry": "lerobot-infer",
+      "mode": "single",
+      "command": [
+        "${WORKSPACE}/.test-env/bin/dora",
+        "run",
+        "${WORKSPACE}/validation/forge2/runtime-blocked/lerobot-infer/single/dataflow.yaml",
+        "--stop-after",
+        "4s"
+      ],
+      "includes_gateway": false,
+      "exit_code": 1,
+      "passed": false,
+      "status": "blocked / not accepted",
+      "elapsed_seconds": 3.757,
+      "error": null,
+      "scope": "Negative prerequisite diagnostic with unavailable local hardware endpoints, no physical actuation or remote SSH, and no model downloads. Not a successful node-operation or compatibility result.",
+      "log_file": "validation/forge2/runtime-blocked/lerobot-infer/single/dora.log"
+    }
+  ],
   "runtime_missing": "CPU software tests do not cover actual model weights/GPU execution; production model Dora and Gateway chain are pending.",
   "acceptance": "Pending final platform artifacts, applicable hardware/model execution and rollback/sustained-run gates.",
   "pillow_dependency": "Node locks currently resolve published Forge Msgs 2.0.0. Security audit remains dependent on Forge PR #3 and a published security-fixed Msgs release; no vulnerability suppression was added.",
