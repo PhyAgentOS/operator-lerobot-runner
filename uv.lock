@@ -544,7 +544,16 @@ dataset = [
     { name = "pyarrow" },
     { name = "torchcodec" },
 ]
+fastwam = [
+    { name = "diffusers" },
+    { name = "transformers" },
+]
 g05 = [
+    { name = "transformers" },
+]
+lingbot-va = [
+    { name = "accelerate" },
+    { name = "diffusers" },
     { name = "transformers" },
 ]
 pi = [
@@ -575,7 +584,7 @@ dependencies = [
     { name = "forge-policy" },
     { name = "forge-tool", extra = ["dora"] },
     { name = "huggingface-hub" },
-    { name = "lerobot", extra = ["dataset", "g05", "pi", "smolvla", "vla-jepa"] },
+    { name = "lerobot", extra = ["dataset", "fastwam", "g05", "lingbot-va", "pi", "smolvla", "vla-jepa"] },
     { name = "numpy" },
     { name = "opencv-python-headless" },
     { name = "packaging" },
@@ -605,7 +614,7 @@ requires-dist = [
     { name = "forge-policy", specifier = "==1.0.1" },
     { name = "forge-tool", extras = ["dora"], specifier = "==1.0.0" },
     { name = "huggingface-hub", specifier = ">=0.20.0" },
-    { name = "lerobot", extras = ["dataset", "g05", "pi", "smolvla", "vla-jepa"], specifier = "==0.7.0" },
+    { name = "lerobot", extras = ["dataset", "fastwam", "g05", "pi", "smolvla", "vla-jepa", "lingbot-va"], specifier = "==0.7.0" },
     { name = "numpy", specifier = "==2.2.6" },
     { name = "opencv-python-headless", specifier = "==4.13.0.92" },
     { name = "packaging", specifier = ">=24.0" },

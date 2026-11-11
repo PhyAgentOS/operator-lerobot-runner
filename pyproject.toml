@@ -15,7 +15,7 @@ dependencies = [
     # lerobot 0.7 自带 G0.5（policies/g05）；transformers 范围跟随 lerobot[g05]。
     # g05 预处理的 render_runtime_messages 经 lerobot.datasets 导入 recipe，而该包
     # __init__ 强制要求 datasets/av，lerobot[g05] 没声明，这里补上 dataset extra。
-    "lerobot[dataset,g05,pi,smolvla,vla-jepa]==0.7.0",
+    "lerobot[dataset,fastwam,g05,pi,smolvla,vla-jepa,lingbot-va]==0.7.0",
     "transformers>=5.22.0,<5.23.0",
 
     "numpy==2.2.6",

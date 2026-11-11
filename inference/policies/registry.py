@@ -14,6 +14,7 @@ from lerobot_inference.inference.policies.act import (
 )
 from lerobot_inference.inference.policies.base import LerobotPolicyAdapter
 from lerobot_inference.inference.policies.diffusion import DiffusionPolicyAdapter
+from lerobot_inference.inference.policies.fastwam import FastWAMPolicyAdapter
 from lerobot_inference.inference.policies.g05 import G05Adapter
 from lerobot_inference.inference.policies.lingbot_va import LingBotVAAdapter
 from lerobot_inference.inference.policies.pi05 import (
@@ -45,6 +46,9 @@ _POLICY_ALIASES: dict[str, str] = {
     "lingbot_va": "lingbot_va",
     "lingbot-va": "lingbot_va",
     "LingBotVA": "lingbot_va",
+    "fastwam": "fastwam",
+    "FastWAM": "fastwam",
+    "fast-wam": "fastwam",
     "g05": "g05",
     "G05": "g05",
     "g0.5": "g05",
@@ -450,6 +454,105 @@ def _create_lingbot_va(policy_config: dict[str, Any], pretrained_path: str) -> L
 
 
 register_policy_type("lingbot_va", _create_lingbot_va)
+
+
+def _fastwam_policy_config_overrides(policy_config: dict[str, Any]) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+
+    for key in ("n_action_steps", "num_inference_steps"):
+        if key not in policy_config:
+            continue
+        value = policy_config[key]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"policy.{key} must be a positive integer")
+        if value <= 0:
+            raise ValueError(f"policy.{key} must be a positive integer")
+        overrides[key] = value
+
+    if "inference_seed" in policy_config:
+        seed = policy_config["inference_seed"]
+        if seed is None:
+            overrides["inference_seed"] = None
+        elif isinstance(seed, bool) or not isinstance(seed, int):
+            raise ValueError("policy.inference_seed must be an integer or null")
+        else:
+            overrides["inference_seed"] = seed
+
+    if "rand_device" in policy_config:
+        rand_device = policy_config["rand_device"]
+        if not isinstance(rand_device, str) or not rand_device.strip():
+            raise ValueError("policy.rand_device must be a non-empty device string")
+        overrides["rand_device"] = rand_device.strip()
+
+    for key in ("text_cfg_scale", "sigma_shift"):
+        if key not in policy_config:
+            continue
+        raw = policy_config[key]
+        if raw is None and key == "sigma_shift":
+            overrides[key] = None
+            continue
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            raise ValueError(f"policy.{key} must be a finite number")
+        value = float(raw)
+        if not math.isfinite(value):
+            raise ValueError(f"policy.{key} must be a finite number")
+        overrides[key] = value
+
+    if "negative_prompt" in policy_config:
+        value = policy_config["negative_prompt"]
+        if not isinstance(value, str):
+            raise ValueError("policy.negative_prompt must be a string")
+        overrides["negative_prompt"] = value
+
+    for key in ("tiled", "use_amp"):
+        if key not in policy_config:
+            continue
+        value = policy_config[key]
+        if not isinstance(value, bool):
+            raise ValueError(f"policy.{key} must be a boolean")
+        overrides[key] = value
+
+    if "torch_dtype" in policy_config:
+        dtype = str(policy_config["torch_dtype"])
+        if dtype not in {"bfloat16", "float16", "float32"}:
+            raise ValueError(
+                "policy.torch_dtype must be one of: bfloat16, float16, float32"
+            )
+        overrides["torch_dtype"] = dtype
+    return overrides
+
+
+def _create_fastwam(
+    policy_config: dict[str, Any],
+    pretrained_path: str,
+) -> LerobotPolicyAdapter:
+    wan_diffusers_path = policy_config.get("wan_diffusers_path")
+    if not wan_diffusers_path:
+        raise ValueError("policy.wan_diffusers_path is required for FastWAM inference")
+    tokenizer_path = policy_config.get("tokenizer_path")
+    if not tokenizer_path:
+        raise ValueError("policy.tokenizer_path is required for FastWAM inference")
+    instruction = policy_config.get("instruction")
+    if not isinstance(instruction, str) or not instruction.strip():
+        raise ValueError("policy.instruction is required for FastWAM inference")
+
+    camera_aliases = list(policy_config.get("camera_names") or [])
+    adapter = FastWAMPolicyAdapter.from_pretrained(
+        pretrained_path,
+        wan_diffusers_path=str(wan_diffusers_path),
+        tokenizer_path=str(tokenizer_path),
+        device=policy_config.get("device"),
+        instruction=instruction,
+        expected_image_keys=_expected_image_keys(policy_config, camera_aliases),
+        policy_config_overrides=_fastwam_policy_config_overrides(policy_config),
+    )
+    state_dim, action_dim = _act_runtime_dimensions(policy_config)
+    if state_dim is not None and action_dim is not None:
+        adapter.validate_io_dimensions(state_dim, action_dim)
+    return adapter
+
+
+register_policy_type("fastwam", _create_fastwam)
 
 
 def _g05_policy_config_overrides(
