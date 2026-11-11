@@ -1,7 +1,6 @@
 {
   "repository": "operator-lerobot-runner",
   "node_candidate_version": "2.0.0",
-  "baseline_commit": "b1929a7383184ab396d32d44959629c2f5248c7b",
   "changes": [
     "Upgrade inference package and Policy/Tool runtime dependencies.",
     "Synchronize root source version and CI/build defaults.",
