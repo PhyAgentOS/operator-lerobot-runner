@@ -1,0 +1,22 @@
+{
+  "repository": "operator-lerobot-runner",
+  "node_candidate_version": "2.0.0",
+  "baseline_commit": "b1929a7383184ab396d32d44959629c2f5248c7b",
+  "changes": [
+    "Upgrade inference package and Policy/Tool runtime dependencies.",
+    "Synchronize root source version and CI/build defaults.",
+    "Synchronize English/Chinese root README guidance and frozen dependencies."
+  ],
+  "software_tests": {
+    "log": "tests.log",
+    "summary": [
+      "156 passed in 27.88s"
+    ]
+  },
+  "dora_cli": "1.0.1",
+  "runtime_records": [],
+  "runtime_missing": "CPU software tests do not cover actual model weights/GPU execution; production model Dora and Gateway chain are pending.",
+  "acceptance": "Pending final platform artifacts, applicable hardware/model execution and rollback/sustained-run gates.",
+  "pillow_dependency": "Node locks currently resolve published Forge Msgs 2.0.0. Security audit remains dependent on Forge PR #3 and a published security-fixed Msgs release; no vulnerability suppression was added.",
+  "gitlab_synchronization": "Not started; follows full acceptance."
+}
