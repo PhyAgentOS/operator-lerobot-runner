@@ -167,16 +167,43 @@ class PolicyNodeConfig:
         base = p.parent
         policy = data.get("policy")
         if isinstance(policy, dict):
-            for key in ("run_dir", "pretrained_path", "tokenizer_path", "ckpt_path", "wan_pretrained_path"):
+            for key in _POLICY_PATH_KEYS:
                 value = policy.get(key)
                 if not value:
                     continue
-                path_value = Path(os.path.expandvars(str(value))).expanduser()
+                path_value = Path(_expand_policy_value(key, value)).expanduser()
                 if not path_value.is_absolute():
                     policy[key] = str((base / path_value).resolve())
                 else:
                     policy[key] = str(path_value)
+            # 也可能是 Hub repo id：只展开环境变量和 ~，不按 yaml 目录解析
+            for key in _POLICY_MODEL_NAME_KEYS:
+                value = policy.get(key)
+                if not value:
+                    continue
+                policy[key] = os.path.expanduser(_expand_policy_value(key, value))
         return cls.from_dict(data)
+
+
+_POLICY_PATH_KEYS = (
+    "run_dir",
+    "pretrained_path",
+    "tokenizer_path",
+    "ckpt_path",
+    "wan_pretrained_path",
+    "wan_diffusers_path",
+)
+_POLICY_MODEL_NAME_KEYS = ("vlm_model_name", "qwen_model_name")
+
+
+def _expand_policy_value(key: str, value: Any) -> str:
+    raw = str(value)
+    expanded = os.path.expandvars(raw)
+    if "${" in expanded:
+        raise ValueError(
+            f"policy.{key} references an unset environment variable: {raw!r}"
+        )
+    return expanded
 
 
 # 兼容旧导入名
