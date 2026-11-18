@@ -15,16 +15,15 @@
     "artifacts": [
       {
         "name": "lerobot_inference-1.0.5-py3-none-any.whl",
-        "size": 93640,
-        "sha256": "7190ab3a1b65cea7cbbbf6d9615f64e40ef34da85381b01495fb069747d6f9c2"
+        "size": 93640
       },
       {
         "name": "lerobot_inference-1.0.5.tar.gz",
-        "size": 171704,
-        "sha256": "2bfeb89a14b38e1393cfda410dc7f42057368ac2cf95fa86a315f48fdfd03089"
+        "size": 171704
       }
     ]
   },
+  "source_profile_scope": "Local candidate worktrees; proposed maintenance changes are not deployed or merged yet. Full checksums and raw logs remain in the local workspace.",
   "source_profiles": [
     {
       "repo": "PhyAgentOS/operator-lerobot-runner",

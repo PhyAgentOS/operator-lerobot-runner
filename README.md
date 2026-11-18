@@ -266,6 +266,8 @@ This project uses [Apache License 2.0](LICENSE). Runtime/build dependency licens
 
 ## Versioned releases
 
+**Mandatory tag-first release rule:** merge the version/lock change, create an annotated version tag on that reviewed commit, build that exact tag, validate the artifacts, then publish. Moving branch names, untagged commit IDs and replacement of published tags are not release inputs.
+
 | Release line | Source | Node/package version | Runtime |
 | --- | --- | --- | --- |
 | Forge 1.x | `stable/1.x` | `1.x`, tag `v1.X.Y` | Forge 1.x / Dora 0.4.x |
