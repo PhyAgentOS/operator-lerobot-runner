@@ -250,3 +250,7 @@ tar -czf lerobot_infer-<version>-linux-x86_64.tar.gz -C dist/onefile lerobot_inf
 
 本项目采用 [Apache License 2.0](LICENSE)。第三方运行时与构建期依赖的许可证见
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## CI 策略
+
+本分支不再维护自动依赖漏洞审计，也不将其作为 CI 或合并门槛。现有测试、构建及其他检查继续保留。移除审计门槛不改变锁定依赖，也不代表此前报告的漏洞已修复。
