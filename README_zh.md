@@ -221,6 +221,12 @@ dist/lerobot_infer/lerobot_infer infer --config /path/to/policy_act.yaml
 
 构建缓存和产物均被 Git 忽略；需要重新打包时可执行 `bash scripts/build.sh --clean`。
 
+以 Forge/PAOS `directory_tar_gz` 方式交付时，发布工作流使用
+`tar --dereference --hard-dereference` 打包整个 `lerobot_infer/` 目录。
+PyInstaller 可能在构建时生成共享库软链接，归档时必须将其写成普通文件。
+CI 会在打包前拒绝不安全或悬空的源链接，并检查 tar 内仅含普通文件和目录。
+注册表中已有的归档需要重新构建并发布，才能获得此修复。
+
 ### 单文件节点构建（可选）
 
 以 Forge/PAOS `executable_tar_gz` 契约安装节点时，归档根目录必须只包含一个可执行文件，

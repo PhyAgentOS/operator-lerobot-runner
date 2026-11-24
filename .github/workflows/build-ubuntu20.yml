@@ -68,8 +68,17 @@ jobs:
           ./dist/lerobot_infer/lerobot_infer --help >/dev/null
           file ./dist/lerobot_infer/lerobot_infer
           ldd --version | sed -n '1p'
+          # Check link targets before dereferencing: only links resolving inside
+          # the runtime tree are allowed as packaging inputs.
+          bad_links="$(find dist/lerobot_infer -type l \
+            \( -lname '/*' -o -lname '*..*' \) -print -quit)"
+          test -z "${bad_links}" || { echo "unsafe symlink: ${bad_links}" >&2; exit 1; }
+          dangling="$(find dist/lerobot_infer -xtype l -print -quit)"
+          test -z "${dangling}" || { echo "dangling symlink: ${dangling}" >&2; exit 1; }
           archive="forge-lerobot-inference-v${RELEASE_VERSION}-ubuntu20.04-x86_64.tar.gz"
           tar \
+            --dereference \
+            --hard-dereference \
             --sort=name \
             --mtime='UTC 1970-01-01' \
             --owner=0 \
@@ -81,17 +90,18 @@ jobs:
           sha256sum "${archive}" > "${archive}.sha256"
           tar -tzf "${archive}" | grep -qx "lerobot_infer/lerobot_infer"
           sha256sum --check "${archive}.sha256"
-          # PAOS directory_tar_gz contract: the archive root must be exactly
-          # one directory named after the node entrypoint, holding the
-          # same-named executable plus its runtime tree. All symbolic links
-          # must stay relative and resolve inside the tree.
+          # PAOS directory_tar_gz contract: one root directory named after
+          # the entrypoint, containing only regular files and directories.
           test "$(tar -tzf "${archive}" | awk -F/ '{print $1}' | sort -u)" = "lerobot_infer"
-          bad_links="$(find dist/lerobot_infer -type l \
-            \( -lname '/*' -o -lname '*..*' \) -print -quit)"
-          test -z "${bad_links}" || { echo "unsafe symlink: ${bad_links}" >&2; exit 1; }
-          dangling="$(find dist/lerobot_infer -xtype l -print -quit)"
-          test -z "${dangling}" || { echo "dangling symlink: ${dangling}" >&2; exit 1; }
-          test "$(find dist/lerobot_infer -type f -links +1 | wc -l)" = "0"
+          uv run --no-project --python 3.12 python - "${archive}" <<'PY'
+          import sys
+          import tarfile
+
+          with tarfile.open(sys.argv[1], "r:gz") as archive:
+              for member in archive:
+                  if not (member.isfile() or member.isdir()):
+                      raise SystemExit(f"forbidden archive entry: {member.name} (type={member.type!r})")
+          PY
 
       - name: Build onefile Forge node (optional)
         if: ${{ inputs.build_node }}

@@ -233,6 +233,13 @@ dist/lerobot_infer/lerobot_infer infer --config /path/to/policy_act.yaml
 
 Build caches/artifacts are Git-ignored. Rebuild cleanly with `bash scripts/build.sh --clean`.
 
+For Forge/PAOS `directory_tar_gz` delivery, the release workflow packages the entire
+`lerobot_infer/` directory with `tar --dereference --hard-dereference`. PyInstaller may
+create shared-library symlinks during the build; these must become regular files in
+the archive. CI rejects unsafe or dangling source symlinks before packaging and checks
+that the resulting tar contains only regular files and directories. Existing registry
+archives must be rebuilt and republished to receive this fix.
+
 ### Optional single-file Node build
 
 Forge/PAOS `executable_tar_gz` installation requires exactly one executable at the archive root,
