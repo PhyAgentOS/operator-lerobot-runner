@@ -74,7 +74,7 @@
   "gitlab_sync": false,
   "master_refresh": {
     "date": "2026-11-25",
-    "base_commit": "69ffce0b3dabd5ad444ace6bd6dfd1c3b6a83feb",
+    "base_commit": "69ffce0",
     "lock_policy": "uv.lock is byte-for-byte identical to master; no runtime dependency upgrades in this release-tooling PR.",
     "readme": "English and Chinese quickstart now describe the locked CUDA 12.8 / Torch 2.9.1 baseline.",
     "runtime_acceptance": "not run; this change does not migrate or qualify a 2.x runtime."
