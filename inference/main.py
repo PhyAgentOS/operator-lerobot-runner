@@ -72,6 +72,7 @@ def _run_session_endpoint(
         alias_for_cameras=alias_for_cameras,
         auto_start=bool(policy_config.get("auto_start", False)),
         call_lifecycle_hooks=True,
+        action_trigger=config.action_trigger,
     )
     return runner.run(node)
 

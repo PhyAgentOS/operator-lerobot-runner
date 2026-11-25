@@ -16,6 +16,7 @@ _CONFIG_DIR = Path(__file__).resolve().parents[1] / "config" / "inference"
         ("act.yaml", "act", None),
         ("pi05.yaml", "pi05", "sync"),
         ("pi05_async_rtc.yaml", "pi05", "async_rtc"),
+        ("g05.yaml", "g05", None),
     ],
 )
 def test_inference_config_example_is_loadable(

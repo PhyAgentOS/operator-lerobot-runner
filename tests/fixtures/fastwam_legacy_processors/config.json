@@ -1,0 +1,122 @@
+{
+  "n_obs_steps": 1,
+  "input_features": {
+    "observation.images.image": {
+      "type": "VISUAL",
+      "shape": [
+        3,
+        224,
+        224
+      ]
+    },
+    "observation.images.image2": {
+      "type": "VISUAL",
+      "shape": [
+        3,
+        224,
+        224
+      ]
+    },
+    "observation.state": {
+      "type": "STATE",
+      "shape": [
+        8
+      ]
+    }
+  },
+  "output_features": {
+    "action": {
+      "type": "ACTION",
+      "shape": [
+        7
+      ]
+    }
+  },
+  "device": null,
+  "use_amp": false,
+  "push_to_hub": false,
+  "repo_id": null,
+  "private": null,
+  "tags": null,
+  "license": null,
+  "action_dim": 7,
+  "proprio_dim": 8,
+  "action_horizon": 32,
+  "n_action_steps": 32,
+  "num_video_frames": 33,
+  "image_size": [
+    224,
+    448
+  ],
+  "context_len": 128,
+  "model_id": ".",
+  "tokenizer_model_id": ".",
+  "tokenizer_max_len": 128,
+  "load_text_encoder": true,
+  "mot_checkpoint_mixed_attn": false,
+  "torch_dtype": "bfloat16",
+  "video_scheduler": {
+    "train_shift": 5,
+    "infer_shift": 5,
+    "num_train_timesteps": 1000
+  },
+  "action_scheduler": {
+    "train_shift": 5,
+    "infer_shift": 5,
+    "num_train_timesteps": 1000
+  },
+  "loss": {
+    "lambda_video": 1,
+    "lambda_action": 1
+  },
+  "video_dit_config": {
+    "has_image_input": false,
+    "patch_size": [
+      1,
+      2,
+      2
+    ],
+    "in_dim": 48,
+    "hidden_dim": 3072,
+    "ffn_dim": 14336,
+    "freq_dim": 256,
+    "text_dim": 4096,
+    "out_dim": 48,
+    "num_heads": 24,
+    "attn_head_dim": 128,
+    "num_layers": 30,
+    "eps": 1e-06,
+    "seperated_timestep": true,
+    "require_clip_embedding": false,
+    "require_vae_embedding": false,
+    "fuse_vae_embedding_in_latents": true,
+    "use_gradient_checkpointing": false,
+    "video_attention_mask_mode": "first_frame_causal",
+    "action_conditioned": false,
+    "action_dim": 7,
+    "action_group_causal_mask_mode": "group_diagonal"
+  },
+  "action_dit_config": {
+    "action_dim": 7,
+    "hidden_dim": 1024,
+    "ffn_dim": 4096,
+    "num_heads": 24,
+    "attn_head_dim": 128,
+    "num_layers": 30,
+    "text_dim": 4096,
+    "freq_dim": 256,
+    "eps": 1e-06,
+    "use_gradient_checkpointing": false
+  },
+  "normalization_mapping": {
+    "VISUAL": "MEAN_STD",
+    "STATE": "MIN_MAX",
+    "ACTION": "MIN_MAX"
+  },
+  "optimizer_lr": 0.0001,
+  "optimizer_weight_decay": 0.01,
+  "type": "fastwam",
+  "toggle_action_dimensions": [
+    -1
+  ]
+}

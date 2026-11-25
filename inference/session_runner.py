@@ -50,7 +50,13 @@ class LeRobotSessionPolicyRunner:
         call_lifecycle_hooks: bool = True,
         endpoint_instance_id: str | None = None,
         clock: Callable[[], float] = time.monotonic,
+        action_trigger: str = "tick",
     ) -> None:
+        if action_trigger not in ("tick", "observation"):
+            raise ValueError(f"unknown action_trigger {action_trigger!r}")
+        self.action_trigger = action_trigger
+        # observation 触发：自上次出动作以来新到达的观测输入 ID。
+        self._fresh_inputs: set[str] = set()
         self.node = node
         self.policy = policy
         self.endpoint = endpoint
@@ -98,6 +104,11 @@ class LeRobotSessionPolicyRunner:
         if request is not None:
             self._send_envelope(request)
 
+    def _observation_complete(self) -> bool:
+        return "proprio_state" in self._fresh_inputs and all(
+            input_id in self._fresh_inputs for input_id in self.image_input_id_to_alias
+        )
+
     def _handle_tool(self, value: object) -> None:
         message = ToolMessage.from_arrow(value)
         envelope = tool_message_to_envelope(message)
@@ -111,6 +122,7 @@ class LeRobotSessionPolicyRunner:
         self.state.phase = "idle"
         self.cached_proprio = None
         self.cached_images.clear()
+        self._fresh_inputs.clear()
         stop = getattr(self.policy, "stop", None)
         if callable(stop):
             stop()
@@ -161,16 +173,21 @@ class LeRobotSessionPolicyRunner:
                 if result.reset_observation_cache:
                     self.cached_proprio = None
                     self.cached_images.clear()
+                    self._fresh_inputs.clear()
                 if self.emit_command_status:
                     self._send_command_status(result)
                 return None
             if input_id == "proprio_state" and value is not None:
                 self.cached_proprio = value
+                self._fresh_inputs.add("proprio_state")
                 return None
             if input_id in self.image_input_id_to_alias and value is not None:
                 self.cached_images[input_id] = value
+                self._fresh_inputs.add(input_id)
                 return None
             if input_id != "tick" or not self.state.is_running:
+                return None
+            if self.action_trigger == "observation" and not self._observation_complete():
                 return None
 
             if self.policy.is_observation_needed():
@@ -187,6 +204,7 @@ class LeRobotSessionPolicyRunner:
             action_payload = self.policy.generate_action(observation, self.camera_aliases)
             if action_payload is not None:
                 self.node.send_output("action", self.build_action(action_payload).to_arrow())
+                self._fresh_inputs.clear()
         except (KeyError, TypeError, ValueError) as exc:
             logger.warning("ignored invalid policy input: %s", exc)
         except Exception:

@@ -12,6 +12,9 @@ import yaml
 from lerobot_inference.common.paths import resolve_user_path
 
 
+ACTION_TRIGGERS = ("tick", "observation")
+
+
 @dataclass(frozen=True)
 class JointConfig:
     name: str
@@ -30,6 +33,10 @@ class PolicyNodeConfig:
     image_input_id_to_alias: dict[str, str] = field(default_factory=dict)
     state_joints: list[str] = field(default_factory=list)
     mode: str = "dora_plain"
+    # tick：每个 Dora tick 出一个动作（真机按控制频率消费）。
+    # observation：每收齐一帧新观测（proprio + 全部相机）才出一个动作，
+    # 供 1:1 锁步的仿真 benchmark 使用，保证 chunk 内动作逐个被执行。
+    action_trigger: str = "tick"
 
     @property
     def joint_order(self) -> list[str]:
@@ -132,6 +139,11 @@ class PolicyNodeConfig:
         mode = str(data.get("mode", "dora_plain")).strip()
         if mode not in {"dora_plain", "session_endpoint"}:
             raise ValueError("mode 必须为 dora_plain 或 session_endpoint")
+        action_trigger = str(data.get("action_trigger", "tick")).strip()
+        if action_trigger not in ACTION_TRIGGERS:
+            raise ValueError(f"action_trigger 必须为 {ACTION_TRIGGERS} 之一，收到 {action_trigger!r}")
+        if action_trigger != "tick" and mode != "session_endpoint":
+            raise ValueError("action_trigger: observation 仅支持 mode: session_endpoint")
 
         return cls(
             joints=joints,
@@ -140,6 +152,7 @@ class PolicyNodeConfig:
             auto_start=_as_bool(policy.get("auto_start", data.get("auto_start", False))),
             image_input_id_to_alias=image_input_id_to_alias,
             mode=mode,
+            action_trigger=action_trigger,
         )
 
     @classmethod
@@ -154,16 +167,43 @@ class PolicyNodeConfig:
         base = p.parent
         policy = data.get("policy")
         if isinstance(policy, dict):
-            for key in ("run_dir", "pretrained_path", "tokenizer_path", "ckpt_path", "wan_pretrained_path"):
+            for key in _POLICY_PATH_KEYS:
                 value = policy.get(key)
                 if not value:
                     continue
-                path_value = Path(os.path.expandvars(str(value))).expanduser()
+                path_value = Path(_expand_policy_value(key, value)).expanduser()
                 if not path_value.is_absolute():
                     policy[key] = str((base / path_value).resolve())
                 else:
                     policy[key] = str(path_value)
+            # 也可能是 Hub repo id：只展开环境变量和 ~，不按 yaml 目录解析
+            for key in _POLICY_MODEL_NAME_KEYS:
+                value = policy.get(key)
+                if not value:
+                    continue
+                policy[key] = os.path.expanduser(_expand_policy_value(key, value))
         return cls.from_dict(data)
+
+
+_POLICY_PATH_KEYS = (
+    "run_dir",
+    "pretrained_path",
+    "tokenizer_path",
+    "ckpt_path",
+    "wan_pretrained_path",
+    "wan_diffusers_path",
+)
+_POLICY_MODEL_NAME_KEYS = ("vlm_model_name", "qwen_model_name")
+
+
+def _expand_policy_value(key: str, value: Any) -> str:
+    raw = str(value)
+    expanded = os.path.expandvars(raw)
+    if "${" in expanded:
+        raise ValueError(
+            f"policy.{key} references an unset environment variable: {raw!r}"
+        )
+    return expanded
 
 
 # 兼容旧导入名
