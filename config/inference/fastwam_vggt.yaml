@@ -1,0 +1,36 @@
+# FastWAM VGGT-Omega (E05 family) -- RoboDojo 14D dual-arm example.
+# Point policy.bundle_path at the bundle directory; see README.
+mode: session_endpoint
+
+joints:
+  - {name: left_arm_joint1, mode: position, unit: radians}
+  - {name: left_arm_joint2, mode: position, unit: radians}
+  - {name: left_arm_joint3, mode: position, unit: radians}
+  - {name: left_arm_joint4, mode: position, unit: radians}
+  - {name: left_arm_joint5, mode: position, unit: radians}
+  - {name: left_arm_joint6, mode: position, unit: radians}
+  - {name: left_gripper, mode: position, unit: normalized}
+  - {name: right_arm_joint1, mode: position, unit: radians}
+  - {name: right_arm_joint2, mode: position, unit: radians}
+  - {name: right_arm_joint3, mode: position, unit: radians}
+  - {name: right_arm_joint4, mode: position, unit: radians}
+  - {name: right_arm_joint5, mode: position, unit: radians}
+  - {name: right_arm_joint6, mode: position, unit: radians}
+  - {name: right_gripper, mode: position, unit: normalized}
+
+state_joints: [left_arm_joint1, left_arm_joint2, left_arm_joint3, left_arm_joint4, left_arm_joint5, left_arm_joint6, left_gripper, right_arm_joint1, right_arm_joint2, right_arm_joint3, right_arm_joint4, right_arm_joint5, right_arm_joint6, right_gripper]
+
+policy:
+  type: fastwam_vggt
+  policy_id: fastwam_e05
+  auto_start: false
+  bundle_path: ${FASTWAM_BUNDLE_DIR}
+  device: cuda
+  num_inference_steps: 10
+  instruction: ""
+
+# Aliases must equal the bundle camera keys; order in this mapping is irrelevant.
+image_inputs:
+  image/head: cam_head
+  image/left_wrist: cam_left_wrist
+  image/right_wrist: cam_right_wrist

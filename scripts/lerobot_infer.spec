@@ -13,9 +13,24 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metada
 _spec_dir = Path(os.path.dirname(os.path.abspath(SPEC)))
 _root_dir = _spec_dir.parent
 
+_fastwam_vendor = _root_dir / "third_party" / "fastwam"
+if _fastwam_vendor.is_dir():
+    sys.path.insert(0, str(_fastwam_vendor / "fastwam_source" / "src"))
+    sys.path.insert(
+        0,
+        str(
+            _fastwam_vendor
+            / "fastwam_source"
+            / "third_party"
+            / "vggt-omega"
+        ),
+    )
+
 datas: list = []
 binaries: list = []
 hiddenimports: list = []
+if _fastwam_vendor.is_dir():
+    datas.append((str(_fastwam_vendor), "lerobot_inference/third_party/fastwam"))
 
 for pkg in (
     "torch",
@@ -34,6 +49,8 @@ for pkg in (
     "yaml",
     "dora",
     "pyarrow",
+    "omegaconf",
+    "imageio",
 ):
     try:
         tmp = collect_all(pkg)
@@ -49,6 +66,28 @@ for pkg in ("requests", "filelock", "numpy"):
     datas += copy_metadata(pkg)
 
 hiddenimports += collect_submodules("lerobot_inference")
+hiddenimports += [
+    "fastwam",
+    "fastwam.models",
+    "fastwam.models.wan22",
+    "fastwam.models.wan22.action_dit",
+    "fastwam.models.wan22.action_vggt_lang_recon_fastwam",
+    "fastwam.models.wan22.mot",
+    "fastwam.models.wan22.vggt_bridge",
+    "fastwam.models.wan22.vggt_lang_recon_backbone",
+    "fastwam.utils",
+    "fastwam.utils.logging_config",
+    "fastwam.utils.misc",
+    "vggt_omega",
+]
+hiddenimports += [
+    "lerobot_inference.inference.policies.fastwam_vggt",
+    "lerobot_inference.inference.policies.fastwam_vggt.adapter",
+    "lerobot_inference.inference.policies.fastwam_vggt.bundle",
+    "lerobot_inference.inference.policies.fastwam_vggt.model",
+    "lerobot_inference.inference.policies.fastwam_vggt.runner",
+    "lerobot_inference.inference.policies.fastwam_vggt._factory",
+]
 hiddenimports += collect_submodules("forge_msgs")
 hiddenimports += collect_submodules("forge_common")
 hiddenimports += collect_submodules("forge_policy")
