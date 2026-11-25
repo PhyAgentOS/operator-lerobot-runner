@@ -37,22 +37,21 @@ Implementation and activation: [descriptor](inference/session_endpoint.py), [run
 [configuration validation](inference/config.py), [inference entrypoint](inference/main.py).
 Current Gateway source implements Session; historical binaries may differ, so check paired revisions and locks.
 
-Compatibility: current dependency declarations are `forge-msgs==1.2.0`, `forge-common==1.0.1`, `forge-policy==1.0.1`, `forge-tool[dora]==1.0.0`, `dora-rs==0.4.1`. See [pyproject.toml](pyproject.toml) and [uv.lock](uv.lock). These declarations do not guarantee cross-version interoperability; also check the build revision and Skill lock when using artifacts.
+Compatibility: current dependency declarations are `forge-msgs>=2.1.0,<3`, `forge-common>=2.1.0,<3`, `forge-policy>=2.0.0,<3`, `forge-tool[dora]>=2.0.0,<3`, `dora-rs>=1.0.1,<2`. See [pyproject.toml](pyproject.toml) and [uv.lock](uv.lock). These declarations do not guarantee cross-version interoperability; also check the build revision and Skill lock when using artifacts.
 
 Changes to Node entrypoints, Endpoints or Tool APIs must update this section and the associated configuration/contracts. Follow the [Node README contract](https://github.com/PhyAgentOS/forge/blob/master/CONTRIBUTING.md#node-readme-contract).
 
 ## Quick start
 
 Requirements: Linux x86_64, Python 3.12 and [uv](https://docs.astral.sh/uv/).
-GPU inference requires an NVIDIA driver compatible with the locked stable CUDA 13 Torch wheel.
-`uv.lock` fixes Torch, TorchVision and CUDA userspace dependencies; no nightly/cu128-only index
+GPU inference requires an NVIDIA driver compatible with the locked CUDA 12.8 Torch wheel.
+`uv.lock` fixes Torch, TorchVision and CUDA userspace dependencies; no nightly-only index
 or hand-maintained NVIDIA wheel list is used. Dependencies resolve from public PyPI without internal repositories.
 
-The current lock fixes `torch 2.11.0+cu130`, `torchvision 0.26.0+cu130`, `triton 3.6.0` and `numpy 2.2.6`,
-aligned with the trainer's core versions. The repository reports CUDA matrix multiplication, source ACT
-`infer-once` and PyInstaller ACT `infer-once` on RTX 5060 (compute capability 12.0).
-The wheel includes `sm_75/sm_80/sm_86/sm_90/sm_100/sm_120`; RTX 30/40 series still require real-model
-acceptance before being marked tested.
+The current lock preserves the master baseline: `torch 2.9.1`, `torchvision 0.24.1`,
+`triton 3.5.1`, `numpy 2.2.6`, `lerobot 0.7.0` and `transformers 5.22.2`.
+GPU/model acceptance must use this exact environment; earlier CUDA 13 / Torch 2.11
+results do not establish acceptance for the current lock.
 
 ```bash
 git clone https://github.com/Forgelab-Robotics/operator-lerobot-runner.git
@@ -258,6 +257,12 @@ Notes:
 - Single-file output uses `dist/onefile/` and `build/pyinstaller/lerobot_infer_node/`, separate from onedir artifacts.
 - Single-file startup unpacks dependencies, increasing startup time/archive size; use it for Node delivery where needed.
 - CI builds onedir assets by default; single-file builds remain optional.
+
+## Forge 2.x migration
+
+This branch prepares node version `2.0.0` for Dora 1.x, frozen to Dora `1.0.1` for migration validation. It uses the official Forge 2.x distributions; Common is at least `2.1.0`. Regenerated locks and all executable entrypoints are part of the change.
+
+Every change report must list repository, changes and test evidence, including per-node `dora run` records and a chained test containing `adapter-forge-gateway`. Unavailable hardware/model checks remain pending. Source PRs do not publish stable releases or synchronize GitLab; synchronization follows full acceptance.
 
 ## License
 

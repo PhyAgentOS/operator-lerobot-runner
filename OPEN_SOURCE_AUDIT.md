@@ -1,6 +1,10 @@
 # Open-source release audit
 
-Audit date: 2026-09-03
+Historical audit date: 2026-09-03
+
+The completed checks below describe the historical 1.x release, not acceptance
+of the refreshed Forge 2.x candidate. The current dependency baseline and
+validation scope are recorded in `migration/forge2-report.json`.
 
 ## Decision
 
@@ -44,10 +48,9 @@ as documented in `THIRD_PARTY_NOTICES.md`.
 - No third-party runtime component is vendored; runtime dependencies retain
   the licenses declared by their distributions (see
   `THIRD_PARTY_NOTICES.md`).
-- Torch (BSD-3-Clause) and TorchVision (BSD-3-Clause) are pinned to the
-  stable CUDA 13 wheels (`torch 2.11.0+cu130`, `torchvision 0.26.0+cu130`)
-  from the default PyPI index, aligned with the `lerobot_trainer` core
-  versions documented in the README.
+- Torch (BSD-3-Clause) and TorchVision (BSD-3-Clause) retain master's
+  CUDA 12.8 baseline (`torch 2.9.1`, `torchvision 0.24.1`) from the default
+  PyPI index. See the README and lockfile for the current model dependencies.
 - Triton: MIT. LeRobot, Transformers, Diffusers, Safetensors,
   Hugging Face Hub, OpenCV Python wheels, and the Forge packages:
   Apache-2.0. NumPy: BSD-3-Clause. Einops and PyYAML: MIT. Pillow: HPND.
@@ -77,12 +80,9 @@ CI fails on any vulnerability not listed there.
   never consumes untrusted Hub-hosted weight maps. Remove this ignore
   once a fixed accelerate release is available and
   `uv lock --upgrade-package accelerate` succeeds.
-- `pillow 12.3.0` is affected by the 39 advisories that are fixed in
-  pillow 13.0.0. `forge-msgs` (every release from 1.2.0 through 2.0.0)
-  requires `pillow<13`, so the upgrade is blocked upstream. The runner
-  only encodes and decodes camera frames produced by the local simulator
-  or robot and does not open untrusted image files. Remove these ignores
-  once forge-msgs allows pillow 13.
+- The Forge 2.x candidate uses `forge-msgs 2.1.0` and `pillow 13.0.0`.
+  The former Pillow 12.3.0 exception IDs have been removed; all six
+  existing Torch/Accelerate exception IDs from master are unchanged.
 - CI and this audit do not command physical hardware. Runtime deployment is
   only supported on trusted networks; Dora dataflows must not be exposed
   directly to the public internet (see `SECURITY.md`).

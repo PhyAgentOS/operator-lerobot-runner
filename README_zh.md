@@ -36,15 +36,15 @@ Kai0 与 LeRobot 使用相同 `policy.runner` Endpoint ID；同一 Gateway 中�
 [配置校验](inference/config.py)、[推理入口](inference/main.py)。
 Gateway 当前源码实现 Session，但历史二进制可能不同，需核对配套版本与依赖锁。
 
-兼容性：当前依赖声明为 `forge-msgs==1.2.0`、`forge-common==1.0.1`、`forge-policy==1.0.1`、`forge-tool[dora]==1.0.0`、`dora-rs==0.4.1`；以 [pyproject.toml](pyproject.toml) 与 [uv.lock](uv.lock) 为准。 这些声明不构成跨版本互操作保证；使用制品时还需核对 build revision 和 Skill lock。
+兼容性：当前依赖声明为 `forge-msgs>=2.1.0,<3`、`forge-common>=2.1.0,<3`、`forge-policy>=2.0.0,<3`、`forge-tool[dora]>=2.0.0,<3`、`dora-rs>=1.0.1,<2`；以 [pyproject.toml](pyproject.toml) 与 [uv.lock](uv.lock) 为准。 这些声明不构成跨版本互操作保证；使用制品时还需核对 build revision 和 Skill lock。
 
 后续修改 Node 入口、Endpoint 或 Tool API 时，请同步更新本节及对应配置/契约，遵循 [Node README 规范](https://github.com/PhyAgentOS/forge/blob/master/CONTRIBUTING.md#node-readme-contract)。
 
 ## 快速开始
 
-要求：Linux x86_64、Python 3.12、[uv](https://docs.astral.sh/uv/)；GPU 推理需要兼容 lock 中稳定版 CUDA 13 Torch wheel 的 NVIDIA 驱动。Torch、TorchVision 和 CUDA 用户态依赖由 `uv.lock` 唯一固定，不再使用 nightly/cu128 专用索引或手写 NVIDIA wheel 列表。所有依赖均从公共 PyPI 索引解析，无需访问内部仓库。
+要求：Linux x86_64、Python 3.12、[uv](https://docs.astral.sh/uv/)；GPU 推理需要兼容 lock 中 CUDA 12.8 Torch wheel 的 NVIDIA 驱动。Torch、TorchVision 和 CUDA 用户态依赖由 `uv.lock` 唯一固定，不使用 nightly 专用索引或手写 NVIDIA wheel 列表。所有依赖均从公共 PyPI 索引解析，无需访问内部仓库。
 
-当前 lock 固定 `torch 2.11.0+cu130`、`torchvision 0.26.0+cu130`、`triton 3.6.0` 和 `numpy 2.2.6`，与 `lerobot_trainer` 的核心版本对齐。RTX 5060（compute capability 12.0）已通过 CUDA matrix multiplication、源码 ACT `infer-once` 和 PyInstaller ACT `infer-once`；Torch wheel 包含 `sm_75/sm_80/sm_86/sm_90/sm_100/sm_120`，但 RTX 30/40 系列仍需分别完成真实模型验收后才能标记为 tested。
+当前 lock 保留 master 的依赖基线：`torch 2.9.1`、`torchvision 0.24.1`、`triton 3.5.1`、`numpy 2.2.6`、`lerobot 0.7.0` 和 `transformers 5.22.2`。GPU 与模型验收必须使用这套确切环境；此前 CUDA 13 / Torch 2.11 的结果不能视为当前 lock 的验收依据。
 
 ```bash
 git clone https://github.com/Forgelab-Robotics/operator-lerobot-runner.git
@@ -245,6 +245,12 @@ tar -czf lerobot_infer-<version>-linux-x86_64.tar.gz -C dist/onefile lerobot_inf
 - onefile 变体使用 `dist/onefile/` 与 `build/pyinstaller/lerobot_infer_node/`，与 onedir 产物互不覆盖；
 - 单文件启动时需要解包，启动耗时和归档体积都高于 onedir，仅建议用于节点交付场景；
 - CI 默认仍只构建 onedir 资产，onefile 为可选构建方式。
+
+## Forge 2.x 迁移
+
+本分支准备节点版本 `2.0.0`，适配 Dora 1.x，迁移验证锁定 Dora `1.0.1`。使用正式 Forge 2.x 分发包；Common 至少为 `2.1.0`。此次更新包括依赖锁文件与各独立可执行入口。
+
+每轮报告必须列出仓库、改动和测试证据，包括各节点的 `dora run` 记录，以及包含 `adapter-forge-gateway` 的串联测试。缺少硬件或模型的验收项保持待验证。源码 PR 不等于正式发布；整体验收通过后再同步 GitLab。
 
 ## 许可证
 

@@ -7,11 +7,11 @@ on:
       ref:
         description: Git ref to build
         required: true
-        default: v1.0.5
+        type: string
       version:
         description: Release version without the v prefix
         required: true
-        default: 1.0.5
+        type: string
       build_node:
         description: Also build the onefile Forge node archive
         type: boolean
