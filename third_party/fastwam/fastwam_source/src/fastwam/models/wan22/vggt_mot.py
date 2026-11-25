@@ -13,7 +13,9 @@ import torch
 import torch.nn as nn
 
 logger = logging.getLogger(__name__)
-DEFAULT_VGGT_WEIGHTS = "/meta_eon_cfs/home/ljh/.cache/modelscope/hub/models/sanqilu376/VGGT-Omega/vggt_omega_1b_256_text.pt"
+# Local training-machine path intentionally removed from the public tree.
+# Serving code always passes an explicit weights path.
+DEFAULT_VGGT_WEIGHTS = os.environ.get("FASTWAM_VGGT_WEIGHTS", "")
 VGGT_PATCH_SIZE = 16
 
 
