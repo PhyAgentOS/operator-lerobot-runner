@@ -42,9 +42,9 @@ Gateway 当前源码实现 Session，但历史二进制可能不同，需核对�
 
 ## 快速开始
 
-要求：Linux x86_64、Python 3.12、[uv](https://docs.astral.sh/uv/)；GPU 推理需要兼容 lock 中稳定版 CUDA 13 Torch wheel 的 NVIDIA 驱动。Torch、TorchVision 和 CUDA 用户态依赖由 `uv.lock` 唯一固定，不再使用 nightly/cu128 专用索引或手写 NVIDIA wheel 列表。所有依赖均从公共 PyPI 索引解析，无需访问内部仓库。
+要求：Linux x86_64、Python 3.12、[uv](https://docs.astral.sh/uv/)；GPU 推理需要兼容 lock 中 CUDA 12.8 Torch wheel 的 NVIDIA 驱动。Torch、TorchVision 和 CUDA 用户态依赖由 `uv.lock` 唯一固定，不使用 nightly 专用索引或手写 NVIDIA wheel 列表。所有依赖均从公共 PyPI 索引解析，无需访问内部仓库。
 
-当前 lock 固定 `torch 2.11.0+cu130`、`torchvision 0.26.0+cu130`、`triton 3.6.0` 和 `numpy 2.2.6`，与 `lerobot_trainer` 的核心版本对齐。RTX 5060（compute capability 12.0）已通过 CUDA matrix multiplication、源码 ACT `infer-once` 和 PyInstaller ACT `infer-once`；Torch wheel 包含 `sm_75/sm_80/sm_86/sm_90/sm_100/sm_120`，但 RTX 30/40 系列仍需分别完成真实模型验收后才能标记为 tested。
+当前 lock 保留 master 的依赖基线：`torch 2.9.1`、`torchvision 0.24.1`、`triton 3.5.1`、`numpy 2.2.6`、`lerobot 0.7.0` 和 `transformers 5.22.2`。GPU 与模型验收必须使用这套确切环境；此前 CUDA 13 / Torch 2.11 的结果不能视为当前 lock 的验收依据。
 
 ```bash
 git clone https://github.com/Forgelab-Robotics/operator-lerobot-runner.git
@@ -262,7 +262,7 @@ tar -czf lerobot_infer-<version>-linux-x86_64.tar.gz -C dist/onefile lerobot_inf
 
 **旧版版本号统一：** `stable/1.x` 原为 0.x 的节点以 **1.0.0** 发布，保留 Forge 1.x / Dora 0.4.x 依赖与运行行为。已有 1.x 版本保留。节点/包主版本与 Forge 兼容线一致，不再接受 0.x 发布标签。
 
-当前默认分支仍使用 Forge 1.x；必须先完成 2.x 迁移，2.x 发布校验才会通过。
+只有所选标签包含 2.x 节点版本，且锁文件中的依赖为 Forge 2.x / Dora 1.x，2.x 发布校验才会通过。
 
 两条线均从 `master` 运行 **Build versioned release**。先将版本和锁文件修改通过 PR 合并至对应源码分支，再在已审查提交上创建未占用的 **annotated** 标签，标签必须匹配包元数据。禁止移动已有标签或复用已发布版本。工作流使用自身已审查的发布工具与精确标签源码，旧标签无需包含新发布脚本。
 
