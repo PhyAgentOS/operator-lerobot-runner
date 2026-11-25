@@ -44,15 +44,14 @@ Changes to Node entrypoints, Endpoints or Tool APIs must update this section and
 ## Quick start
 
 Requirements: Linux x86_64, Python 3.12 and [uv](https://docs.astral.sh/uv/).
-GPU inference requires an NVIDIA driver compatible with the locked stable CUDA 13 Torch wheel.
-`uv.lock` fixes Torch, TorchVision and CUDA userspace dependencies; no nightly/cu128-only index
+GPU inference requires an NVIDIA driver compatible with the locked CUDA 12.8 Torch wheel.
+`uv.lock` fixes Torch, TorchVision and CUDA userspace dependencies; no nightly-only index
 or hand-maintained NVIDIA wheel list is used. Dependencies resolve from public PyPI without internal repositories.
 
-The current lock fixes `torch 2.11.0+cu130`, `torchvision 0.26.0+cu130`, `triton 3.6.0` and `numpy 2.2.6`,
-aligned with the trainer's core versions. The repository reports CUDA matrix multiplication, source ACT
-`infer-once` and PyInstaller ACT `infer-once` on RTX 5060 (compute capability 12.0).
-The wheel includes `sm_75/sm_80/sm_86/sm_90/sm_100/sm_120`; RTX 30/40 series still require real-model
-acceptance before being marked tested.
+The current lock preserves the master baseline: `torch 2.9.1`, `torchvision 0.24.1`,
+`triton 3.5.1`, `numpy 2.2.6`, `lerobot 0.7.0` and `transformers 5.22.2`.
+GPU/model acceptance must use this exact environment; earlier CUDA 13 / Torch 2.11
+results do not establish acceptance for the current lock.
 
 ```bash
 git clone https://github.com/Forgelab-Robotics/operator-lerobot-runner.git
@@ -263,3 +262,32 @@ Notes:
 
 This project uses [Apache License 2.0](LICENSE). Runtime/build dependency licenses are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Versioned releases
+
+**Mandatory tag-first release rule:** merge the version/lock change, create an annotated version tag on that reviewed commit, build that exact tag, validate the artifacts, then publish. Moving branch names, untagged commit IDs and replacement of published tags are not release inputs.
+
+| Release line | Source | Node/package version | Runtime |
+| --- | --- | --- | --- |
+| Forge 1.x | `stable/1.x` | `1.x`, tag `v1.X.Y` | Forge 1.x / Dora 0.4.x |
+| Forge 2.x | `master` | `2.x`, tag `v2.X.Y` | Forge 2.x / Dora 1.x |
+
+**Legacy normalization:** nodes previously at 0.x on `stable/1.x` release as **1.0.0**, retaining Forge 1.x / Dora 0.4.x dependencies and runtime behavior. Existing 1.x package versions are retained. Node/package majors now follow the Forge compatibility line; a 0.x tag is rejected.
+
+A 2.x release passes validation only when the selected tag contains node version 2.x, Forge 2.x dependencies and Dora 1.x in its lockfile.
+
+Run **Build versioned release** from `master` for either line. First merge the version/lock changes into the selected source branch, then create an unused **annotated** tag on that reviewed commit. The tag must match package metadata. Never move existing tags or reuse a published version. Dispatch uses the workflow's reviewed tooling with the exact tagged source, so legacy tags need not contain the new release helper.
+
+```bash
+# Replace with an existing, reviewed and unpublished tag matching source metadata.
+TAG=v1.X.Y
+gh workflow run release.yml --ref master -f release_line=1.x -f tag="$TAG"
+TAG=v2.X.Y
+gh workflow run release.yml --ref master -f release_line=2.x -f tag="$TAG"
+```
+
+The workflow verifies tag type, source commit, branch ancestry, source version and locked Forge/Dora compatibility. It builds source archives and wheel/sdist where supported, checks Python distribution metadata and SHA-256, and creates or attaches to a **draft GitHub Release**. Published releases/assets are not overwritten; review all build results and acceptance evidence before publishing. This workflow does not publish node packages to PyPI.
+
+Set `build_binaries=true` to call the existing Ubuntu 20.04 binary workflow; its existing architecture, CLI and archive checks remain in force. You can also run `build-ubuntu20.yml` directly with `ref`, `version` and `release_line`; `ref` must be an annotated tag, not a moving branch. Binary artifacts are attached only after all selected jobs succeed.
+
+The source archive preserves the tagged tree; external SDKs/submodules, model downloads and site configuration remain separate prerequisites. A dependency or SDK build failure is not successful release acceptance. Build success does not establish single-node or Gateway-chain `dora run`, hardware, real-model, sustained-run or rollback acceptance. Every acceptance chain must include `adapter-forge-gateway` from the same compatibility line. Forge 2.x is a **breaking change**: align Forge libraries, node versions and Dora across the entire deployment; keep 1.x on its maintenance branch.
