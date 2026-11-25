@@ -46,7 +46,7 @@ def test_model_name_keeps_hub_repo_id(tmp_path):
 
     policy = PolicyNodeConfig.from_yaml_path(path).policy
 
-    assert policy["vlm_model_name"] == "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+    assert policy["vlm_model_name"] == "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"  # pragma: allowlist secret -- public Hugging Face model ID
 
 
 def test_relative_wan_diffusers_path_resolves_from_yaml(tmp_path):

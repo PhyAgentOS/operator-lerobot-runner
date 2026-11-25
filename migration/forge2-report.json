@@ -80,7 +80,7 @@
   },
   "master_refresh": {
     "date": "2026-11-25",
-    "base_commit": "69ffce0b3dabd5ad444ace6bd6dfd1c3b6a83feb",
+    "base_commit": "69ffce0",
     "locked_model_baseline": {
       "torch": "2.9.1",
       "torchvision": "0.24.1",
