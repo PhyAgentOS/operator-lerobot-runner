@@ -26,6 +26,17 @@ licenses:
 - `forge-msgs`, `forge-common`, `forge-policy`, `forge-tool`: Apache-2.0
 - `dora-rs`: MIT
 
+## Vendored source (not from a package index)
+
+`third_party/fastwam/` contains the FastWAM research sources
+(`fastwam_source/src/fastwam`) and the vendored VGGT-Omega package
+(`fastwam_source/third_party/vggt-omega`) used by `type: fastwam_vggt`.
+These files are copied verbatim from the FastWAM training repository; the
+upstream LICENSE files were not part of the delivered tree, so redistribution
+of a source or binary release must confirm the FastWAM and VGGT-Omega licenses
+with their authors before publication. The optional FastWAM adapter can be
+excluded from a distribution without affecting the other policies.
+
 Transitive dependencies retain the licenses declared by their distributions.
 Consult the locked environment and installed package metadata for the complete
 dependency graph.

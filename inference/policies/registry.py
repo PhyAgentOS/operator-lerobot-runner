@@ -23,6 +23,7 @@ from lerobot_inference.inference.policies.pi05 import (
 )
 from lerobot_inference.inference.policies.smolvla import SmolVLAAdapter
 from lerobot_inference.inference.policies.vla_jepa import VLAJEPAAdapter
+from lerobot_inference.inference.policies.fastwam_vggt import FastWAMVGGTPolicyAdapter
 
 PolicyFactory = Callable[[dict[str, Any], str], LerobotPolicyAdapter]
 
@@ -52,6 +53,11 @@ _POLICY_ALIASES: dict[str, str] = {
     "g05": "g05",
     "G05": "g05",
     "g0.5": "g05",
+    "fastwam_vggt": "fastwam_vggt",
+    "fastwam-vggt": "fastwam_vggt",
+    "fastwam_vggt_e05": "fastwam_vggt",
+    "e05": "fastwam_vggt",
+    "E05": "fastwam_vggt",
 }
 
 # Implemented adapters keyed by normalized LeRobot policy type.
@@ -593,8 +599,35 @@ def _create_g05(policy_config: dict[str, Any], pretrained_path: str) -> LerobotP
         adapter.validate_io_dimensions(state_dim, action_dim)
     return adapter
 
+def _create_fastwam_vggt(policy_config: dict[str, Any], pretrained_path: str) -> LerobotPolicyAdapter:
+    """FastWAM VGGT-Omega (E05 family): bundle directory instead of a LeRobot checkpoint."""
+    bundle_path = policy_config.get("bundle_path") or pretrained_path
+    if not bundle_path:
+        raise ValueError(
+            "policy.bundle_path (or pretrained_path) is required for fastwam_vggt: "
+            "it must point at a directory containing bundle.json"
+        )
+    camera_aliases = list(policy_config.get("camera_names") or [])
+    adapter = FastWAMVGGTPolicyAdapter.from_pretrained(
+        bundle_path,
+        checkpoint=policy_config.get("checkpoint"),
+        device=policy_config.get("device"),
+        instruction=str(policy_config.get("instruction", "")),
+        expected_image_keys=_expected_image_keys(policy_config, camera_aliases),
+        num_inference_steps=policy_config.get("num_inference_steps"),
+        action_horizon=policy_config.get("action_horizon"),
+        image_size=policy_config.get("image_size"),
+        gripper_indices=policy_config.get("gripper_indices"),
+        seed=policy_config.get("inference_seed", policy_config.get("seed")),
+    )
+    state_dim, action_dim = _act_runtime_dimensions(policy_config)
+    if state_dim is not None and action_dim is not None:
+        adapter.validate_io_dimensions(state_dim, action_dim)
+    return adapter
+
 
 register_policy_type("g05", _create_g05)
+register_policy_type("fastwam_vggt", _create_fastwam_vggt)
 
 
 def resolve_policy_pretrained_path(policy_config: dict[str, Any]) -> str:
@@ -631,6 +664,14 @@ def create_policy_adapter(policy_config: dict[str, Any]) -> LerobotPolicyAdapter
         raise ValueError(
             f"Unknown policy type {policy_type!r}. Implemented: {supported_policy_types()}"
         )
+    if policy_type == "fastwam_vggt":
+        bundle_path = policy_config.get("bundle_path") or policy_config.get("pretrained_path")
+        if not bundle_path:
+            raise ValueError(
+                "policy.bundle_path (or pretrained_path) is required for fastwam_vggt"
+            )
+        policy_config = {**policy_config, "bundle_path": str(bundle_path)}
+        return factory(policy_config, str(bundle_path))
     pretrained_path = resolve_policy_pretrained_path(policy_config)
     policy_config = {**policy_config, "pretrained_path": pretrained_path}
     return factory(policy_config, pretrained_path)

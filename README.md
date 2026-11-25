@@ -130,8 +130,35 @@ Each implemented policy has its own template:
 | `config/inference/pi05_async_rtc.yaml` | PI0.5 asynchronous Real-Time Chunking |
 | `config/inference/diffusion.yaml` | Diffusion Policy; observation history and action chunks managed inside the policy |
 | `config/inference/lingbot_va.yaml` | LingBot-VA video-action world model; policy-managed chunks and KV cache |
+| `config/inference/fastwam_vggt.yaml` | FastWAM VGGT-Omega action policy (E05 family); loads a bundle directory with model config, normalization and UMT5 cache |
 
 See `config/inference/README.md` for complete details.
+
+### FastWAM VGGT-Omega bundles (`type: fastwam_vggt`)
+
+FastWAM checkpoints (the E05 family trained by the FastWAM research codebase)
+are not LeRobot policies. `fastwam_vggt` loads a *bundle directory* instead of a
+`pretrained_model` folder:
+
+```text
+<bundle>/
+  bundle.json          # schema below
+  model_config.json    # hydra-style model config, `_target_` = fastwam.runtime.create_action_vggt_lang_recon_fastwam
+  normalization.json   # {"state": {"mean": [...], "std": [...]}, "action": {...}}
+  text/                # UMT5 embedding cache: sha256(prompt).pt, one per instruction
+  weights/step_XXXXXX.pt
+```
+
+`bundle.json` declares `camera_keys`, `image_size` as `[width, height]`,
+`action_dim`, `proprio_dim`, `action_horizon`, `num_inference_steps`,
+`gripper_indices`, and optional `checkpoint` / `text_dir` /
+`prompt_template`. Camera aliases in `image_inputs` must use the bundle camera
+names; the adapter reorders them to the checkpoint order. One bundle per
+benchmark: RoboDojo and RoboTwin use three wrist/head cameras, LIBERO uses two,
+so never point a benchmark profile at another benchmark's bundle.
+
+`scripts/build_fastwam_bundle.py` assembles a bundle from a FastWAM run
+directory (`contract.json` style or hydra `config.yaml` + `dataset_stats.json`).
 
 Inference configuration must satisfy:
 
@@ -214,6 +241,7 @@ Checkpoint and component sources are listed below. For offline use, download loc
 | Diffusion | Official LeRobot Hub, such as `lerobot/diffusion_pusht`, `lerobot/diffusion_policy_simultaneous_*` | None | Apache-2.0 |
 | LingBot-VA | Official `lerobot/lingbot_va_libero_long` | Frozen Wan VAE + UMT5: `robbyant/lingbot-va-base` with `vae/`, `text_encoder/`, `tokenizer/` | See each HF repository |
 | VLA-JEPA | Official `lerobot/VLA-JEPA-LIBERO` | Qwen3-VL backbone `Qwen/Qwen3-VL-2B-Instruct`; V-JEPA2 encoder `facebook/vjepa2-vitl-fpc64-256` (optional during inference) | Apache-2.0 / MIT |
+| FastWAM (VGGT-Omega, E05 family) | User-supplied run directories: `step_*.pt` plus model config, normalization, UMT5 cache | Vendored FastWAM + VGGT-Omega code in `third_party/fastwam/` | Check upstream FastWAM/VGGT-Omega licenses |
 
 > ACT/Pi0.5 use supplied training artifacts; the other policies load official LeRobot Hub checkpoints,
 > downloaded on demand or referenced locally. VLA-JEPA source and pinned revisions are recorded in
