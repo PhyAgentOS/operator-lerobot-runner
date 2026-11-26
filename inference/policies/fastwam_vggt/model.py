@@ -11,13 +11,24 @@ machine without CUDA (or without torch at all).
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import types
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 MODULE_NAMES = ("action_expert", "proprio_encoder", "vggt_bridge", "vggt_backbone")
+
+GRAPH_METADATA_KEYS = (
+    "vggt_camera_keys",
+    "layer_pairs",
+    "bridge_config",
+    "time_route_boundary",
+    "route_rule",
+)
 
 
 class FastWAMModelError(RuntimeError):
@@ -87,7 +98,13 @@ def build_model(
     """Instantiate the model described by `model_config` (hydra-style `_target_`)."""
     import torch
 
-    from ._factory import SUPPORTED_TARGETS, create_action_vggt_lang_recon_fastwam
+    from ._factory import (
+        LANG_TARGET,
+        MOE_TARGET,
+        SUPPORTED_TARGETS,
+        create_action_vggt_lang_recon_fastwam,
+        create_action_vggt_moe_recon_fastwam,
+    )
 
     ensure_fastwam_importable(vendor_root)
     config = dict(model_config)
@@ -96,6 +113,10 @@ def build_model(
         raise FastWAMModelError(
             f"unsupported model _target_ {target!r}; supported: {sorted(SUPPORTED_TARGETS)}"
         )
+    factory = {
+        LANG_TARGET: create_action_vggt_lang_recon_fastwam,
+        MOE_TARGET: create_action_vggt_moe_recon_fastwam,
+    }[target]
 
     # The checkpoint carries the full state dict (VGGT backbone included), so the
     # constructor must never try to fetch training-time weights or a pretrained DiT.
@@ -106,9 +127,7 @@ def build_model(
     config["skip_action_dit_load_from_pretrain"] = True
 
     model_dtype = dtype if dtype is not None else torch.bfloat16
-    return create_action_vggt_lang_recon_fastwam(
-        **config, model_dtype=model_dtype, device=device
-    )
+    return factory(**config, model_dtype=model_dtype, device=device)
 
 
 def enable_inference_mode(model: Any) -> Any:
@@ -145,30 +164,59 @@ def load_checkpoint(model: Any, checkpoint: str | Path) -> int:
             f"checkpoint format {format_name!r} does not match model "
             f"{model.CHECKPOINT_FORMAT!r}"
         )
-    if payload.get("version") != model.CHECKPOINT_VERSION:
+    try:
+        payload_version = int(payload.get("version"))
+    except (TypeError, ValueError) as exc:
+        raise FastWAMModelError(f"invalid checkpoint version: {payload.get('version')!r}") from exc
+    model_version = int(model.CHECKPOINT_VERSION)
+    if payload_version < model_version:
         raise FastWAMModelError(
-            f"checkpoint version {payload.get('version')!r} does not match model "
-            f"{model.CHECKPOINT_VERSION!r}"
+            f"checkpoint version {payload_version} is older than model {model_version}"
         )
-    if payload.get("target") != "future":
-        raise FastWAMModelError(f"unexpected checkpoint target: {payload.get('target')!r}")
+    if payload_version != model_version:
+        # Newer checkpoints can carry the same graph with extra metadata; the
+        # per-tensor key/shape validation below decides whether it is loadable.
+        logger.info(
+            "checkpoint version %s is newer than model %s; validating tensors",
+            payload_version,
+            model_version,
+        )
+    target = payload.get("target")
+    if target is not None and target != "future":
+        raise FastWAMModelError(f"unexpected checkpoint target: {target!r}")
 
     expected = _normalize_metadata(model._checkpoint_metadata())
     actual = dict(payload.get("metadata") or {})
-    # Training-only annotations are not part of the architecture identity.
-    for key in ("downstream_objective", "initialization"):
-        actual.pop(key, None)
-        expected.pop(key, None)
+
+    # Only fields that define the inference graph are compared. Everything else
+    # in the metadata annotates how the weights were *trained* (reconstruction
+    # targets, lambda weights, objective names); `infer_action` never runs those
+    # heads, so a difference is informative, not a load error.
+    required_keys = tuple(key for key in GRAPH_METADATA_KEYS if key in expected)
+    missing_required = sorted(key for key in required_keys if key not in actual)
+    if missing_required:
+        raise FastWAMModelError(
+            f"checkpoint metadata is missing graph fields: {missing_required}"
+        )
     mismatched = {
         key: (expected[key], actual.get(key))
-        for key in expected
-        if key in actual and _normalize_metadata(actual[key]) != expected[key]
+        for key in GRAPH_METADATA_KEYS
+        if key in expected and _normalize_metadata(actual[key]) != expected[key]
     }
-    missing = sorted(set(expected) - set(actual))
-    if mismatched or missing:
+    if mismatched:
         raise FastWAMModelError(
-            "checkpoint metadata does not match the configured model: "
-            f"mismatched={sorted(mismatched)}, missing={missing}"
+            "checkpoint metadata contradicts the configured graph: "
+            f"mismatched={sorted(mismatched)}"
+        )
+    training_only = sorted(
+        key
+        for key in set(expected) | set(actual)
+        if key not in GRAPH_METADATA_KEYS and expected.get(key) != actual.get(key)
+    )
+    if training_only:
+        logger.info(
+            "checkpoint differs from this model only in training-time annotations: %s",
+            training_only,
         )
 
     for name, module in _modules(model).items():
@@ -212,6 +260,7 @@ def build_and_load(
 
 __all__ = [
     "FastWAMModelError",
+    "GRAPH_METADATA_KEYS",
     "MODULE_NAMES",
     "build_and_load",
     "build_model",

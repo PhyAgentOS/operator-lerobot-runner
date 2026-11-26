@@ -29,6 +29,7 @@ DEFAULT_PROMPT = (
 )
 BUNDLE_SCHEMA_VERSION = 1
 MODEL_TARGET = "fastwam.runtime.create_action_vggt_lang_recon_fastwam"
+MOE_MODEL_TARGET = "fastwam.runtime.create_action_vggt_moe_recon_fastwam"
 
 _REQUIRED_FIELDS = (
     "model_config",
@@ -113,6 +114,100 @@ def _find_text_dir(root: Path, configured: str | None = None) -> Path | None:
     return None
 
 
+
+def _model_config_from_checkpoint(checkpoint: Path) -> tuple[dict[str, Any], list[str]]:
+    """Derive the model graph from the checkpoint itself.
+
+    Tensor shapes give action/proprio dimensions, DiT width and depth; the
+    checkpoint metadata gives camera keys, bridge config and the MoE routing
+    parameters. No training-side config file is needed.
+    """
+    import torch
+
+    payload = torch.load(checkpoint, map_location="cpu", mmap=True, weights_only=True)
+    metadata = payload.get("metadata") or {}
+    bridge = metadata.get("bridge_config") or {}
+    action_expert = payload["action_expert"]
+    proprio_encoder = payload["proprio_encoder"]
+
+    heads = int(bridge.get("fastwam_num_heads") or 24)
+    q_weight = action_expert["blocks.0.self_attn.q.weight"]
+    hidden = int(q_weight.shape[1])
+    attn_head_dim = int(q_weight.shape[0]) // heads
+    action_dim = int(action_expert["head.weight"].shape[0])
+    proprio_dim = int(proprio_encoder["weight"].shape[1])
+    num_layers = len(
+        {key.split(".")[1] for key in action_expert if key.startswith("blocks.")}
+    )
+    ffn_dim = int(action_expert["blocks.0.ffn.0.weight"].shape[0])
+    freq_dim = int(action_expert["time_embedding.0.weight"].shape[1])
+    text_dim = int(
+        metadata.get("text_dim")
+        or payload.get("text_dim")
+        or action_expert["text_embedding.0.weight"].shape[1]
+    )
+    camera_keys = list(metadata.get("vggt_camera_keys") or [])
+    if not camera_keys:
+        raise FastWAMBundledConfigError("checkpoint metadata has no vggt_camera_keys")
+
+    config: dict[str, Any] = {
+        "layer_pairs": [list(pair) for pair in metadata.get("layer_pairs") or []],
+        "projection_mode": bridge.get("projection_mode", "vggt_to_fastwam"),
+        "projection_sharing": bridge.get("projection_sharing", "independent"),
+        "action_dit_config": {
+            "action_dim": action_dim,
+            "hidden_dim": hidden,
+            "ffn_dim": ffn_dim,
+            "num_heads": heads,
+            "attn_head_dim": attn_head_dim,
+            "num_layers": num_layers,
+            "text_dim": text_dim,
+            "freq_dim": freq_dim,
+            "eps": 1e-6,
+            "use_gradient_checkpointing": False,
+        },
+        "action_scheduler": {
+            "train_shift": 5.0,
+            "infer_shift": 5.0,
+            "num_train_timesteps": int(metadata.get("num_train_timesteps") or 1000),
+        },
+        "proprio_dim": proprio_dim,
+        "mot_checkpoint_mixed_attn": False,
+        "vggt_width": int(bridge.get("vggt_width") or 1024),
+        "vggt_num_heads": int(bridge.get("vggt_num_heads") or 16),
+        "vggt_camera_keys": camera_keys,
+        "train_vggt": bool(metadata.get("train_vggt", True)),
+        "lambda_vggt_recon": float(metadata.get("lambda_vggt_recon", 0.01)),
+        "action_dit_pretrained_path": None,
+        "reconstruction_loss_config": metadata.get("reconstruction_loss_config")
+        or {"backend": "official", "official": {}, "lambda_camera": 1.0,
+            "lambda_depth": 1.0, "lambda_point": 1.0, "use_conf_loss": False,
+            "conf_alpha": 0.2, "gradient_weight": 0.5},
+    }
+    if "moe" in str(payload.get("format", "")):
+        sharing = metadata.get("sharing") or {}
+        config["_target_"] = MOE_MODEL_TARGET
+        config.update(
+            {
+                "time_route_boundary": float(
+                    metadata.get("time_route_boundary", 0.8333333333333334)
+                ),
+                "low_noise_use_language_condition": bool(
+                    metadata.get("low_noise_use_language_condition", True)
+                ),
+                "share_patch_embedding": bool(sharing.get("share_patch_embedding", True)),
+                "share_camera_register_tokens": bool(
+                    sharing.get("share_camera_register_tokens", True)
+                ),
+                "share_geometry_heads": bool(sharing.get("share_geometry_heads", True)),
+                "share_bridge": bool(sharing.get("share_bridge", True)),
+            }
+        )
+    else:
+        config["_target_"] = MODEL_TARGET
+    return config, camera_keys
+
+
 def _synthesize_manifest(
     root: Path,
     *,
@@ -135,7 +230,18 @@ def _synthesize_manifest(
 
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         model_config = dict(raw.get("model") or {})
-        model_config.setdefault("_target_", MODEL_TARGET)
+        moe_markers = (
+            "time_route_boundary",
+            "checkpoint_sharing_policy",
+            "share_bridge",
+            "share_patch_embedding",
+        )
+        default_target = (
+            MOE_MODEL_TARGET
+            if any(marker in model_config for marker in moe_markers)
+            else MODEL_TARGET
+        )
+        model_config.setdefault("_target_", default_target)
         data = (raw.get("data") or {}).get("train") or {}
         horizon = int(data.get("action_horizon") or 32)
         camera_keys = model_config.get("vggt_camera_keys")
@@ -145,9 +251,13 @@ def _synthesize_manifest(
         if shape and len(shape) == 3:
             dataset_image_size = (int(shape[2]), int(shape[1]))
     else:
-        raise FastWAMBundledConfigError(
-            f"{root} has neither bundle.json, contract.json nor config.yaml"
-        )
+        checkpoint = _latest_checkpoint(root)
+        if checkpoint is None:
+            raise FastWAMBundledConfigError(
+                f"{root} has no bundle.json, contract.json, config.yaml or weights/step_*.pt"
+            )
+        model_config, camera_keys = _model_config_from_checkpoint(checkpoint)
+        horizon = 32
 
     if not camera_keys:
         raise FastWAMBundledConfigError("model config declares no vggt_camera_keys")

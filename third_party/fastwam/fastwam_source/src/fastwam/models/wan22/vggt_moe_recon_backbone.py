@@ -389,6 +389,7 @@ def build_vggt_moe_recon_backbone(
     share_patch_embedding: bool = True,
     share_camera_register_tokens: bool = True,
     share_geometry_heads: bool = True,
+    skip_vggt_load_from_pretrain: bool = False,
     aggregator_factory: Callable[..., nn.Module] | None = None,
 ) -> VGGTMoEReconBackbone:
     """Build pretrained streams with independent choices for input/head sharing."""
@@ -400,25 +401,26 @@ def build_vggt_moe_recon_backbone(
         aggregator_factory = Aggregator
     high = aggregator_factory()
     low = aggregator_factory()
-    checkpoint = aggregator_checkpoint_path or weights_path
-    load_aggregator_weights(high, checkpoint, aggregator_only=aggregator_checkpoint_path is not None)
-    load_aggregator_weights(low, checkpoint, aggregator_only=aggregator_checkpoint_path is not None)
 
     from vggt_omega.models.heads import CameraHead, DenseHead
 
     camera_head = CameraHead(dim_in=2048)
     dense_head = DenseHead(dim_in=2048, patch_size=int(high.patch_size))
-    full = torch.load(weights_path, map_location="cpu", weights_only=True)
-    if isinstance(full, dict) and "state_dict" in full:
-        full = full["state_dict"]
-    camera_head.load_state_dict(
-        {key[12:]: value for key, value in full.items() if key.startswith("camera_head.")},
-        strict=True,
-    )
-    dense_head.load_state_dict(
-        {key[11:]: value for key, value in full.items() if key.startswith("dense_head.")},
-        strict=True,
-    )
+    if not skip_vggt_load_from_pretrain:
+        checkpoint = aggregator_checkpoint_path or weights_path
+        load_aggregator_weights(high, checkpoint, aggregator_only=aggregator_checkpoint_path is not None)
+        load_aggregator_weights(low, checkpoint, aggregator_only=aggregator_checkpoint_path is not None)
+        full = torch.load(weights_path, map_location="cpu", weights_only=True)
+        if isinstance(full, dict) and "state_dict" in full:
+            full = full["state_dict"]
+        camera_head.load_state_dict(
+            {key[12:]: value for key, value in full.items() if key.startswith("camera_head.")},
+            strict=True,
+        )
+        dense_head.load_state_dict(
+            {key[11:]: value for key, value in full.items() if key.startswith("dense_head.")},
+            strict=True,
+        )
 
     model = VGGTMoEReconBackbone(
         high,

@@ -224,3 +224,50 @@ def test_adapter_validates_dimensions(tmp_path: Path) -> None:
         adapter.validate_io_dimensions(8, 14)
     with pytest.raises(ValueError, match="action dimension"):
         adapter.validate_io_dimensions(14, 7)
+
+
+def test_model_config_from_checkpoint_derives_graph(tmp_path, monkeypatch):
+    """A bare checkpoint (no contract/config.yaml) is enough to describe the graph."""
+    import torch
+
+    def fake_tensor(*shape):
+        return torch.zeros(*shape)
+
+    payload = {
+        "format": "action_vggt_moe_recon_fastwam",
+        "version": 3,
+        "metadata": {
+            "bridge_config": {
+                "projection_mode": "vggt_to_fastwam",
+                "projection_sharing": "independent",
+                "fastwam_num_heads": 24,
+                "vggt_width": 1024,
+                "vggt_num_heads": 16,
+            },
+            "vggt_camera_keys": ["image", "wrist_image"],
+            "layer_pairs": [[0, 3]],
+            "time_route_boundary": 0.5,
+            "sharing": {"share_bridge": False},
+            "reconstruction_loss_config": {"backend": "official"},
+        },
+        "action_expert": {
+            "blocks.0.self_attn.q.weight": fake_tensor(48, 16),
+            "blocks.0.ffn.0.weight": fake_tensor(32, 16),
+            "time_embedding.0.weight": fake_tensor(16, 8),
+            "text_embedding.0.weight": fake_tensor(16, 4096),
+            "head.weight": fake_tensor(7, 16),
+        },
+        "proprio_encoder": {"weight": fake_tensor(16, 8)},
+    }
+    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: payload)
+
+    config, cameras = bundle_mod._model_config_from_checkpoint(tmp_path / "step_000001.pt")
+    assert cameras == ["image", "wrist_image"]
+    assert config["_target_"] == bundle_mod.MOE_MODEL_TARGET
+    assert config["action_dit_config"]["action_dim"] == 7
+    assert config["action_dit_config"]["hidden_dim"] == 16
+    assert config["action_dit_config"]["attn_head_dim"] == 2
+    assert config["action_dit_config"]["text_dim"] == 4096
+    assert config["proprio_dim"] == 8
+    assert config["time_route_boundary"] == 0.5
+    assert config["share_bridge"] is False
