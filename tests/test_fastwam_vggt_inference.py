@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
@@ -92,11 +95,81 @@ def test_load_bundle_rejects_missing_field(tmp_path: Path) -> None:
 def test_text_embedding_path_uses_prompt_hash(tmp_path: Path) -> None:
     root = _write_bundle(tmp_path)
     cfg = load_bundle(root)
-    path = cfg.text_embedding_path("Stack the bowls")
-    import hashlib
-
     prompt = bundle_mod.DEFAULT_PROMPT.format(task="Stack the bowls")
-    assert path.name == hashlib.sha256(prompt.encode()).hexdigest() + ".pt"
+    expected = root / "text" / (hashlib.sha256(prompt.encode()).hexdigest() + ".t5_len128.wan22ti2v5b.pt")
+    expected.write_bytes(b"stub")
+    assert cfg.text_embedding_path("Stack the bowls") == expected
+
+
+class _EncoderStub:
+    """Minimal stand-in for a fastwam_text_encoder node."""
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+        stub = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args) -> None:  # noqa: A003
+                pass
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                prompt = payload["prompts"][0]
+                stub.prompts.append(prompt)
+                digest = hashlib.sha256(prompt.encode()).hexdigest()
+                path = Path(payload["cache_dir"]) / f"{digest}.t5_len128.wan22ti2v5b.pt"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"stub")
+                body = json.dumps(
+                    {"results": [{"prompt": prompt, "path": str(path), "written": True}]}
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_text_encoder_service_is_used_on_cache_miss(tmp_path: Path) -> None:
+    root = _write_bundle(tmp_path)
+    stub = _EncoderStub()
+    try:
+        cfg = load_bundle(root, text_encoder_url=stub.url)
+        path = cfg.text_embedding_path("Stack the bowls")
+        assert path.is_file()
+        assert stub.prompts == [bundle_mod.DEFAULT_PROMPT.format(task="Stack the bowls")]
+    finally:
+        stub.close()
+
+
+def test_text_encoder_url_can_come_from_env(tmp_path: Path, monkeypatch) -> None:
+    root = _write_bundle(tmp_path)
+    monkeypatch.setenv(bundle_mod.TEXT_ENCODER_URL_ENV, "http://127.0.0.1:19999")
+    cfg = load_bundle(root)
+    assert cfg.text_encoder_url == "http://127.0.0.1:19999"
+
+
+def test_missing_text_without_encoder_is_actionable(tmp_path: Path) -> None:
+    root = _write_bundle(tmp_path)
+    cfg = load_bundle(root)
+    with pytest.raises(FastWAMBundledConfigError, match="text_encoder_url"):
+        cfg.text_embedding_path("Stack the bowls")
+
+
+def test_text_encoder_failure_is_reported(tmp_path: Path) -> None:
+    root = _write_bundle(tmp_path)
+    cfg = load_bundle(root, text_encoder_url="http://127.0.0.1:1")
+    with pytest.raises(FastWAMBundledConfigError, match="text encoder"):
+        cfg.text_embedding_path("Stack the bowls")
 
 
 def test_adapter_chunks_and_resizes(tmp_path: Path) -> None:

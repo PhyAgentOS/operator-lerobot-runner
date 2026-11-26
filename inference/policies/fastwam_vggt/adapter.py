@@ -72,6 +72,7 @@ class FastWAMVGGTPolicyAdapter(LerobotPolicyAdapter):
         image_size: Any = None,
         gripper_indices: Any = None,
         seed: int | None = None,
+        text_encoder_url: str | None = None,
         dtype: Any = None,
         runner_factory: RunnerFactory | None = None,
     ) -> "FastWAMVGGTPolicyAdapter":
@@ -82,6 +83,7 @@ class FastWAMVGGTPolicyAdapter(LerobotPolicyAdapter):
             action_horizon=action_horizon,
             image_size=image_size,
             gripper_indices=gripper_indices,
+            text_encoder_url=text_encoder_url,
         )
         if bundle.checkpoint is None:
             raise ValueError(

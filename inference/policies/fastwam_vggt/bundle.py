@@ -19,9 +19,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 DEFAULT_PROMPT = (
     "A video recorded from a robot's point of view executing the following "
@@ -30,6 +34,9 @@ DEFAULT_PROMPT = (
 BUNDLE_SCHEMA_VERSION = 1
 MODEL_TARGET = "fastwam.runtime.create_action_vggt_lang_recon_fastwam"
 MOE_MODEL_TARGET = "fastwam.runtime.create_action_vggt_moe_recon_fastwam"
+TEXT_ENCODER_URL_ENV = "FASTWAM_TEXT_ENCODER_URL"
+TEXT_CACHE_DIR_ENV = "FASTWAM_TEXT_CACHE_DIR"
+DEFAULT_TEXT_ENCODER_TIMEOUT = 120.0
 
 _REQUIRED_FIELDS = (
     "model_config",
@@ -112,6 +119,54 @@ def _find_text_dir(root: Path, configured: str | None = None) -> Path | None:
         if candidate.is_dir() and any(candidate.glob("*.pt")):
             return candidate.resolve()
     return None
+
+
+def _opener_for(url: str) -> urllib.request.OpenerDirector:
+    """Bypass ``*_proxy`` for loopback services; honour it everywhere else."""
+    host = (urlparse(url).hostname or "").lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener()
+
+
+def _encode_via_service(
+    url: str,
+    prompt: str,
+    cache_dir: Path,
+    *,
+    timeout: float = DEFAULT_TEXT_ENCODER_TIMEOUT,
+) -> Path:
+    """Ask a ``fastwam_text_encoder`` node to materialise ``prompt``'s embedding.
+
+    The node writes the ``<sha>.t5_len<L>.wan22ti2v5b.pt`` file itself, so the
+    large tensor never travels over the socket -- only the resulting path does.
+    """
+    endpoint = url.rstrip("/") + "/encode"
+    body = json.dumps({"prompts": [prompt], "cache_dir": str(cache_dir)}).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with _opener_for(url).open(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        raise FastWAMBundledConfigError(
+            f"text encoder at {endpoint} failed: {exc}. "
+            "Check that the fastwam_text_encoder node is up and its --cache-dir is writable."
+        ) from exc
+
+    results = payload.get("results") or []
+    if not results:
+        raise FastWAMBundledConfigError(f"text encoder at {endpoint} returned no result: {payload}")
+    path = Path(str(results[0].get("path") or ""))
+    if not path.is_file():
+        raise FastWAMBundledConfigError(
+            f"text encoder at {endpoint} reported {path}, but it does not exist on this host"
+        )
+    return path
 
 
 
@@ -319,6 +374,7 @@ class FastWAMBundledConfig:
     gripper_indices: tuple[int, ...] = ()
     prompt_template: str = DEFAULT_PROMPT
     text_dir: Path | None = None
+    text_encoder_url: str | None = None
     checkpoint: Path | None = None
     seed: int | None = None
 
@@ -326,14 +382,66 @@ class FastWAMBundledConfig:
     def n_cameras(self) -> int:
         return len(self.camera_keys)
 
+    def _cache_roots(self) -> list[Path]:
+        """Directories searched for (and written with) UMT5 cache files.
+
+        The bundle's own ``text/`` comes first; ``FASTWAM_TEXT_CACHE_DIR`` adds a
+        writable location for bundles that live on read-only weight mounts.
+        """
+        roots: list[Path] = []
+        if self.text_dir is not None:
+            roots.append(self.text_dir)
+        override = os.environ.get(TEXT_CACHE_DIR_ENV, "").strip()
+        if override:
+            candidate = Path(override).expanduser()
+            if candidate not in roots:
+                roots.append(candidate)
+        return roots
+
+    def _text_cache_dir(self, *, create: bool = False) -> Path:
+        """Directory that holds (or should hold) the UMT5 cache files."""
+        roots = self._cache_roots()
+        target = roots[-1] if roots else self.root / "text"
+        if create:
+            target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def _lookup_text_cache(self, digest: str) -> Path | None:
+        # RoboDojo caches use `<sha>.pt`; LIBERO/RoboTwin caches use
+        # `<sha>.t5_len<L>.wan22ti2v5b.pt`. Accept both without guessing.
+        for root in self._cache_roots():
+            plain = root / f"{digest}.pt"
+            if plain.is_file():
+                return plain
+            matches = sorted(root.glob(f"{digest}.*.pt"))
+            if matches:
+                return matches[0]
+        return None
+
     def text_embedding_path(self, task: str) -> Path:
+        prompt = self.prompt_template.format(task=task)
+        digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+        cached = self._lookup_text_cache(digest)
+        if cached is not None:
+            return cached
+
+        if self.text_encoder_url:
+            # Miss: let the encoder node write the entry, then use it.
+            return _encode_via_service(self.text_encoder_url, prompt, self._text_cache_dir(create=True))
+
         if self.text_dir is None:
             raise FastWAMBundledConfigError(
-                "no text embedding cache found; language-conditioned inference needs "
-                "the UMT5 cache (data/text or text_embeddings)"
+                "no UMT5 text embedding cache found for this bundle, and no text encoder "
+                "configured to create one. Point policy.text_encoder_url (or "
+                f"{TEXT_ENCODER_URL_ENV}) at a fastwam_text_encoder node, or put the "
+                f"cache files in {self.root / 'text'}."
             )
-        prompt = self.prompt_template.format(task=task)
-        return self.text_dir / (hashlib.sha256(prompt.encode("utf-8")).hexdigest() + ".pt")
+        raise FastWAMBundledConfigError(
+            f"missing UMT5 embedding for instruction {task!r} (looked for {digest}.*.pt in "
+            f"{self.text_dir}) and no text encoder configured. Set policy.text_encoder_url "
+            f"(or {TEXT_ENCODER_URL_ENV}) to a fastwam_text_encoder node, or add the cache file."
+        )
 
 
 def load_bundle(
@@ -344,6 +452,7 @@ def load_bundle(
     action_horizon: int | None = None,
     image_size: Any = None,
     gripper_indices: Any = None,
+    text_encoder_url: str | None = None,
 ) -> FastWAMBundledConfig:
     """Load ``bundle.json`` or synthesize one from a FastWAM run directory."""
     root = Path(path).expanduser().resolve()
@@ -416,11 +525,20 @@ def load_bundle(
         raise FastWAMBundledConfigError("gripper_indices must be within [0, action_dim)")
 
     text_dir_raw = manifest.get("text_dir")
+    encoder_url = (
+        text_encoder_url
+        or manifest.get("text_encoder_url")
+        or os.environ.get(TEXT_ENCODER_URL_ENV)
+        or None
+    )
+    encoder_url = str(encoder_url).strip() if encoder_url else ""
+    if not encoder_url:
+        encoder_url = None
     text_dir = None
     if text_dir_raw:
         candidate = Path(str(text_dir_raw))
         text_dir = candidate if candidate.is_absolute() else root / candidate
-        if not text_dir.is_dir():
+        if not text_dir.is_dir() and not encoder_url:
             raise FastWAMBundledConfigError(f"text_dir does not exist: {text_dir}")
 
     checkpoint_raw = checkpoint if checkpoint is not None else manifest.get("checkpoint")
@@ -452,6 +570,7 @@ def load_bundle(
         gripper_indices=gripper_tuple,
         prompt_template=str(manifest.get("prompt_template", DEFAULT_PROMPT)),
         text_dir=text_dir,
+        text_encoder_url=encoder_url,
         checkpoint=checkpoint_path,
         seed=seed,
     )
@@ -460,6 +579,7 @@ def load_bundle(
 __all__ = [
     "BUNDLE_SCHEMA_VERSION",
     "DEFAULT_PROMPT",
+    "TEXT_ENCODER_URL_ENV",
     "FastWAMBundledConfig",
     "FastWAMBundledConfigError",
     "load_bundle",

@@ -619,6 +619,7 @@ def _create_fastwam_vggt(policy_config: dict[str, Any], pretrained_path: str) ->
         image_size=policy_config.get("image_size"),
         gripper_indices=policy_config.get("gripper_indices"),
         seed=policy_config.get("inference_seed", policy_config.get("seed")),
+        text_encoder_url=policy_config.get("text_encoder_url"),
     )
     state_dim, action_dim = _act_runtime_dimensions(policy_config)
     if state_dim is not None and action_dim is not None:
