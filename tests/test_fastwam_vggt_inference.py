@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -165,10 +166,48 @@ def test_missing_text_without_encoder_is_actionable(tmp_path: Path) -> None:
         cfg.text_embedding_path("Stack the bowls")
 
 
-def test_text_encoder_failure_is_reported(tmp_path: Path) -> None:
+def test_text_encoder_failure_is_reported(tmp_path: Path, monkeypatch) -> None:
     root = _write_bundle(tmp_path)
+    monkeypatch.setenv(bundle_mod.TEXT_ENCODER_WAIT_ENV, "1")
     cfg = load_bundle(root, text_encoder_url="http://127.0.0.1:1")
-    with pytest.raises(FastWAMBundledConfigError, match="text encoder"):
+    with pytest.raises(FastWAMBundledConfigError, match="not reachable within"):
+        cfg.text_embedding_path("Stack the bowls")
+
+
+def test_text_encoder_http_error_is_not_retried(tmp_path: Path, monkeypatch) -> None:
+    """A service that answers is up; retrying a 4xx only delays the failure."""
+    root = _write_bundle(tmp_path)
+    monkeypatch.setenv(bundle_mod.TEXT_ENCODER_WAIT_ENV, "60")
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args) -> None:  # noqa: A003
+            pass
+
+        def do_POST(self) -> None:  # noqa: N802
+            body = json.dumps({"error": "boom"}).encode()
+            self.send_response(500)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        cfg = load_bundle(root, text_encoder_url=f"http://127.0.0.1:{server.server_port}")
+        started = time.monotonic()
+        with pytest.raises(FastWAMBundledConfigError, match="rejected the request"):
+            cfg.text_embedding_path("Stack the bowls")
+        assert time.monotonic() - started < 20, "an answering service must not be retried"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_text_encoder_wait_env_is_validated(tmp_path: Path, monkeypatch) -> None:
+    root = _write_bundle(tmp_path)
+    monkeypatch.setenv(bundle_mod.TEXT_ENCODER_WAIT_ENV, "soon")
+    cfg = load_bundle(root, text_encoder_url="http://127.0.0.1:1")
+    with pytest.raises(FastWAMBundledConfigError, match="number of seconds"):
         cfg.text_embedding_path("Stack the bowls")
 
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -36,7 +37,9 @@ MODEL_TARGET = "fastwam.runtime.create_action_vggt_lang_recon_fastwam"
 MOE_MODEL_TARGET = "fastwam.runtime.create_action_vggt_moe_recon_fastwam"
 TEXT_ENCODER_URL_ENV = "FASTWAM_TEXT_ENCODER_URL"
 TEXT_CACHE_DIR_ENV = "FASTWAM_TEXT_CACHE_DIR"
+TEXT_ENCODER_WAIT_ENV = "FASTWAM_TEXT_ENCODER_WAIT"
 DEFAULT_TEXT_ENCODER_TIMEOUT = 120.0
+DEFAULT_TEXT_ENCODER_WAIT = 300.0
 
 _REQUIRED_FIELDS = (
     "model_config",
@@ -129,6 +132,16 @@ def _opener_for(url: str) -> urllib.request.OpenerDirector:
     return urllib.request.build_opener()
 
 
+def _encoder_wait_seconds() -> float:
+    raw = os.environ.get(TEXT_ENCODER_WAIT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_TEXT_ENCODER_WAIT
+    try:
+        return max(float(raw), 0.0)
+    except ValueError:
+        raise FastWAMBundledConfigError(f"{TEXT_ENCODER_WAIT_ENV} must be a number of seconds, got {raw!r}") from None
+
+
 def _encode_via_service(
     url: str,
     prompt: str,
@@ -140,23 +153,45 @@ def _encode_via_service(
 
     The node writes the ``<sha>.t5_len<L>.wan22ti2v5b.pt`` file itself, so the
     large tensor never travels over the socket -- only the resulting path does.
+
+    Dora starts every dataflow node concurrently, so the policy can reach this
+    point before the encoder has finished loading its 11 GB of weights. Connection
+    failures are therefore retried for ``FASTWAM_TEXT_ENCODER_WAIT`` seconds; an
+    HTTP error means the service answered and is not retried.
     """
+    wait = _encoder_wait_seconds()
     endpoint = url.rstrip("/") + "/encode"
     body = json.dumps({"prompts": [prompt], "cache_dir": str(cache_dir)}).encode("utf-8")
-    request = urllib.request.Request(
-        endpoint,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with _opener_for(url).open(request, timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
-        raise FastWAMBundledConfigError(
-            f"text encoder at {endpoint} failed: {exc}. "
-            "Check that the fastwam_text_encoder node is up and its --cache-dir is writable."
-        ) from exc
+    deadline = time.monotonic() + wait
+    delay = 1.0
+    last_error: Exception | None = None
+
+    while True:
+        request = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with _opener_for(url).open(request, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as exc:
+            # The service is up and rejected the request; retrying cannot help.
+            raise FastWAMBundledConfigError(
+                f"text encoder at {endpoint} rejected the request: HTTP {exc.code}"
+            ) from None
+        except (urllib.error.URLError, OSError) as exc:
+            last_error = exc
+            if time.monotonic() >= deadline:
+                raise FastWAMBundledConfigError(
+                    f"text encoder at {endpoint} was not reachable within {wait:.0f}s "
+                    f"({last_error}). Check that the fastwam_text_encoder node is running on "
+                    "this host and FASTWAM_TEXT_ENCODER_DIR points at its weights."
+                ) from None
+            time.sleep(delay)
+            delay = min(delay * 1.5, 10.0)
 
     results = payload.get("results") or []
     if not results:
@@ -579,7 +614,9 @@ def load_bundle(
 __all__ = [
     "BUNDLE_SCHEMA_VERSION",
     "DEFAULT_PROMPT",
+    "TEXT_CACHE_DIR_ENV",
     "TEXT_ENCODER_URL_ENV",
+    "TEXT_ENCODER_WAIT_ENV",
     "FastWAMBundledConfig",
     "FastWAMBundledConfigError",
     "load_bundle",
