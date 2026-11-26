@@ -14,11 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
-SUPPORTED_TARGETS = frozenset(
-    {
-        "fastwam.runtime.create_action_vggt_lang_recon_fastwam",
-    }
-)
+LANG_TARGET = "fastwam.runtime.create_action_vggt_lang_recon_fastwam"
+MOE_TARGET = "fastwam.runtime.create_action_vggt_moe_recon_fastwam"
+SUPPORTED_TARGETS = frozenset({LANG_TARGET, MOE_TARGET})
 
 
 def create_action_vggt_lang_recon_fastwam(
@@ -128,4 +126,120 @@ def create_action_vggt_lang_recon_fastwam(
     )
 
 
-__all__ = ["SUPPORTED_TARGETS", "create_action_vggt_lang_recon_fastwam"]
+def create_action_vggt_moe_recon_fastwam(
+    *,
+    vggt_weights_path: str,
+    layer_pairs: Any,
+    projection_mode: str,
+    action_dit_config: Any,
+    action_scheduler: Any,
+    projection_sharing: str = "shared",
+    aggregator_checkpoint_path: str | None = None,
+    action_dit_pretrained_path: str | None = None,
+    skip_action_dit_load_from_pretrain: bool = False,
+    skip_vggt_load_from_pretrain: bool = False,
+    proprio_dim: int | None = None,
+    mot_checkpoint_mixed_attn: bool = True,
+    vggt_width: int = 1024,
+    vggt_num_heads: int = 16,
+    vggt_camera_keys: Any = (),
+    model_dtype: Any = None,
+    device: str = "cuda",
+    train_vggt: bool = True,
+    time_route_boundary: float = 0.8333333333333334,
+    low_noise_use_language_condition: bool = True,
+    reconstruction_loss_config: Any = None,
+    lambda_vggt_recon: float = 0.05,
+    share_patch_embedding: bool = True,
+    share_camera_register_tokens: bool = True,
+    share_geometry_heads: bool = True,
+    share_bridge: bool = True,
+    checkpoint_sharing_policy: str = "strict",
+    **_ignored: Any,
+):
+    """Timestep-routed current/future reconstruction ActionDiT (MoE variant)."""
+    import torch
+
+    from fastwam.models.wan22.action_dit import ActionDiT
+    from fastwam.models.wan22.action_vggt_moe_recon_fastwam import (
+        ActionVGGTMoEReconFastWAM,
+    )
+    from fastwam.models.wan22.mot import MoT
+    from fastwam.models.wan22.vggt_bridge import VGGTSharedAttentionBridge
+    from fastwam.models.wan22.vggt_moe_recon_backbone import (
+        build_vggt_moe_recon_backbone,
+    )
+
+    if model_dtype is None:
+        model_dtype = torch.bfloat16
+    if not low_noise_use_language_condition:
+        raise ValueError(
+            "ActionVGGTMoEReconFastWAM requires language conditioning on the low route."
+        )
+    if reconstruction_loss_config is None:
+        raise ValueError(
+            "ActionVGGTMoEReconFastWAM requires reconstruction_loss_config."
+        )
+    if not isinstance(action_dit_config, dict) or not isinstance(action_scheduler, dict):
+        raise ValueError("action_dit_config and action_scheduler must be dicts.")
+
+    pairs = [tuple(int(value) for value in pair) for pair in layer_pairs]
+    action = ActionDiT.from_pretrained(
+        action_dit_config=action_dit_config,
+        action_dit_pretrained_path=action_dit_pretrained_path,
+        skip_dit_load_from_pretrain=bool(skip_action_dit_load_from_pretrain),
+        device=device,
+        torch_dtype=model_dtype,
+    )
+    bridge = VGGTSharedAttentionBridge(
+        fastwam_width=int(action.num_heads * action.attn_head_dim),
+        vggt_width=int(vggt_width),
+        fastwam_num_heads=int(action.num_heads),
+        vggt_num_heads=int(vggt_num_heads),
+        vggt_num_layers=24,
+        fastwam_num_layers=len(action.blocks),
+        layer_pairs=pairs,
+        target_experts=("action",),
+        projection_mode=str(projection_mode),
+        projection_sharing=str(projection_sharing),
+        detach_vggt_memory=not bool(train_vggt),
+    ).to(device=device, dtype=model_dtype)
+    mot = MoT(
+        mixtures={"action": action},
+        mot_checkpoint_mixed_attn=bool(mot_checkpoint_mixed_attn),
+        vggt_bridge=bridge,
+    )
+    backbone = build_vggt_moe_recon_backbone(
+        weights_path=vggt_weights_path,
+        aggregator_checkpoint_path=aggregator_checkpoint_path,
+        callback_layer_indices=tuple(pair[0] for pair in pairs),
+        input_camera_keys=tuple(str(key) for key in vggt_camera_keys),
+        share_patch_embedding=bool(share_patch_embedding),
+        share_camera_register_tokens=bool(share_camera_register_tokens),
+        share_geometry_heads=bool(share_geometry_heads),
+        trainable=bool(train_vggt),
+        text_dim=int(action_dit_config["text_dim"]),
+        skip_vggt_load_from_pretrain=bool(skip_vggt_load_from_pretrain),
+    )
+    return ActionVGGTMoEReconFastWAM(
+        action_expert=action,
+        mot=mot,
+        vggt_backbone=backbone,
+        text_dim=int(action_dit_config["text_dim"]),
+        layer_pairs=pairs,
+        time_route_boundary=float(time_route_boundary),
+        share_bridge=bool(share_bridge),
+        checkpoint_sharing_policy=str(checkpoint_sharing_policy),
+        proprio_dim=None if proprio_dim is None else int(proprio_dim),
+        device=device,
+        torch_dtype=model_dtype,
+        train_vggt=bool(train_vggt),
+        action_train_shift=float(action_scheduler["train_shift"]),
+        action_infer_shift=float(action_scheduler["infer_shift"]),
+        action_num_train_timesteps=int(action_scheduler["num_train_timesteps"]),
+        reconstruction_loss_config=reconstruction_loss_config,
+        lambda_vggt_recon=float(lambda_vggt_recon),
+    )
+
+
+__all__ = ["MOE_TARGET", "LANG_TARGET", "SUPPORTED_TARGETS", "create_action_vggt_lang_recon_fastwam", "create_action_vggt_moe_recon_fastwam"]

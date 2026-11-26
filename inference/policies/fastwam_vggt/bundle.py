@@ -19,9 +19,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 DEFAULT_PROMPT = (
     "A video recorded from a robot's point of view executing the following "
@@ -29,6 +34,12 @@ DEFAULT_PROMPT = (
 )
 BUNDLE_SCHEMA_VERSION = 1
 MODEL_TARGET = "fastwam.runtime.create_action_vggt_lang_recon_fastwam"
+MOE_MODEL_TARGET = "fastwam.runtime.create_action_vggt_moe_recon_fastwam"
+TEXT_ENCODER_URL_ENV = "FASTWAM_TEXT_ENCODER_URL"
+TEXT_CACHE_DIR_ENV = "FASTWAM_TEXT_CACHE_DIR"
+TEXT_ENCODER_WAIT_ENV = "FASTWAM_TEXT_ENCODER_WAIT"
+DEFAULT_TEXT_ENCODER_TIMEOUT = 120.0
+DEFAULT_TEXT_ENCODER_WAIT = 300.0
 
 _REQUIRED_FIELDS = (
     "model_config",
@@ -113,6 +124,180 @@ def _find_text_dir(root: Path, configured: str | None = None) -> Path | None:
     return None
 
 
+def _opener_for(url: str) -> urllib.request.OpenerDirector:
+    """Bypass ``*_proxy`` for loopback services; honour it everywhere else."""
+    host = (urlparse(url).hostname or "").lower()
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener()
+
+
+def _encoder_wait_seconds() -> float:
+    raw = os.environ.get(TEXT_ENCODER_WAIT_ENV, "").strip()
+    if not raw:
+        return DEFAULT_TEXT_ENCODER_WAIT
+    try:
+        return max(float(raw), 0.0)
+    except ValueError:
+        raise FastWAMBundledConfigError(f"{TEXT_ENCODER_WAIT_ENV} must be a number of seconds, got {raw!r}") from None
+
+
+def _encode_via_service(
+    url: str,
+    prompt: str,
+    cache_dir: Path,
+    *,
+    timeout: float = DEFAULT_TEXT_ENCODER_TIMEOUT,
+) -> Path:
+    """Ask a ``fastwam_text_encoder`` node to materialise ``prompt``'s embedding.
+
+    The node writes the ``<sha>.t5_len<L>.wan22ti2v5b.pt`` file itself, so the
+    large tensor never travels over the socket -- only the resulting path does.
+
+    Dora starts every dataflow node concurrently, so the policy can reach this
+    point before the encoder has finished loading its 11 GB of weights. Connection
+    failures are therefore retried for ``FASTWAM_TEXT_ENCODER_WAIT`` seconds; an
+    HTTP error means the service answered and is not retried.
+    """
+    wait = _encoder_wait_seconds()
+    endpoint = url.rstrip("/") + "/encode"
+    body = json.dumps({"prompts": [prompt], "cache_dir": str(cache_dir)}).encode("utf-8")
+    deadline = time.monotonic() + wait
+    delay = 1.0
+    last_error: Exception | None = None
+
+    while True:
+        request = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with _opener_for(url).open(request, timeout=timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as exc:
+            # The service is up and rejected the request; retrying cannot help.
+            raise FastWAMBundledConfigError(
+                f"text encoder at {endpoint} rejected the request: HTTP {exc.code}"
+            ) from None
+        except (urllib.error.URLError, OSError) as exc:
+            last_error = exc
+            if time.monotonic() >= deadline:
+                raise FastWAMBundledConfigError(
+                    f"text encoder at {endpoint} was not reachable within {wait:.0f}s "
+                    f"({last_error}). Check that the fastwam_text_encoder node is running on "
+                    "this host and FASTWAM_TEXT_ENCODER_DIR points at its weights."
+                ) from None
+            time.sleep(delay)
+            delay = min(delay * 1.5, 10.0)
+
+    results = payload.get("results") or []
+    if not results:
+        raise FastWAMBundledConfigError(f"text encoder at {endpoint} returned no result: {payload}")
+    path = Path(str(results[0].get("path") or ""))
+    if not path.is_file():
+        raise FastWAMBundledConfigError(
+            f"text encoder at {endpoint} reported {path}, but it does not exist on this host"
+        )
+    return path
+
+
+
+def _model_config_from_checkpoint(checkpoint: Path) -> tuple[dict[str, Any], list[str]]:
+    """Derive the model graph from the checkpoint itself.
+
+    Tensor shapes give action/proprio dimensions, DiT width and depth; the
+    checkpoint metadata gives camera keys, bridge config and the MoE routing
+    parameters. No training-side config file is needed.
+    """
+    import torch
+
+    payload = torch.load(checkpoint, map_location="cpu", mmap=True, weights_only=True)
+    metadata = payload.get("metadata") or {}
+    bridge = metadata.get("bridge_config") or {}
+    action_expert = payload["action_expert"]
+    proprio_encoder = payload["proprio_encoder"]
+
+    heads = int(bridge.get("fastwam_num_heads") or 24)
+    q_weight = action_expert["blocks.0.self_attn.q.weight"]
+    hidden = int(q_weight.shape[1])
+    attn_head_dim = int(q_weight.shape[0]) // heads
+    action_dim = int(action_expert["head.weight"].shape[0])
+    proprio_dim = int(proprio_encoder["weight"].shape[1])
+    num_layers = len(
+        {key.split(".")[1] for key in action_expert if key.startswith("blocks.")}
+    )
+    ffn_dim = int(action_expert["blocks.0.ffn.0.weight"].shape[0])
+    freq_dim = int(action_expert["time_embedding.0.weight"].shape[1])
+    text_dim = int(
+        metadata.get("text_dim")
+        or payload.get("text_dim")
+        or action_expert["text_embedding.0.weight"].shape[1]
+    )
+    camera_keys = list(metadata.get("vggt_camera_keys") or [])
+    if not camera_keys:
+        raise FastWAMBundledConfigError("checkpoint metadata has no vggt_camera_keys")
+
+    config: dict[str, Any] = {
+        "layer_pairs": [list(pair) for pair in metadata.get("layer_pairs") or []],
+        "projection_mode": bridge.get("projection_mode", "vggt_to_fastwam"),
+        "projection_sharing": bridge.get("projection_sharing", "independent"),
+        "action_dit_config": {
+            "action_dim": action_dim,
+            "hidden_dim": hidden,
+            "ffn_dim": ffn_dim,
+            "num_heads": heads,
+            "attn_head_dim": attn_head_dim,
+            "num_layers": num_layers,
+            "text_dim": text_dim,
+            "freq_dim": freq_dim,
+            "eps": 1e-6,
+            "use_gradient_checkpointing": False,
+        },
+        "action_scheduler": {
+            "train_shift": 5.0,
+            "infer_shift": 5.0,
+            "num_train_timesteps": int(metadata.get("num_train_timesteps") or 1000),
+        },
+        "proprio_dim": proprio_dim,
+        "mot_checkpoint_mixed_attn": False,
+        "vggt_width": int(bridge.get("vggt_width") or 1024),
+        "vggt_num_heads": int(bridge.get("vggt_num_heads") or 16),
+        "vggt_camera_keys": camera_keys,
+        "train_vggt": bool(metadata.get("train_vggt", True)),
+        "lambda_vggt_recon": float(metadata.get("lambda_vggt_recon", 0.01)),
+        "action_dit_pretrained_path": None,
+        "reconstruction_loss_config": metadata.get("reconstruction_loss_config")
+        or {"backend": "official", "official": {}, "lambda_camera": 1.0,
+            "lambda_depth": 1.0, "lambda_point": 1.0, "use_conf_loss": False,
+            "conf_alpha": 0.2, "gradient_weight": 0.5},
+    }
+    if "moe" in str(payload.get("format", "")):
+        sharing = metadata.get("sharing") or {}
+        config["_target_"] = MOE_MODEL_TARGET
+        config.update(
+            {
+                "time_route_boundary": float(
+                    metadata.get("time_route_boundary", 0.8333333333333334)
+                ),
+                "low_noise_use_language_condition": bool(
+                    metadata.get("low_noise_use_language_condition", True)
+                ),
+                "share_patch_embedding": bool(sharing.get("share_patch_embedding", True)),
+                "share_camera_register_tokens": bool(
+                    sharing.get("share_camera_register_tokens", True)
+                ),
+                "share_geometry_heads": bool(sharing.get("share_geometry_heads", True)),
+                "share_bridge": bool(sharing.get("share_bridge", True)),
+            }
+        )
+    else:
+        config["_target_"] = MODEL_TARGET
+    return config, camera_keys
+
+
 def _synthesize_manifest(
     root: Path,
     *,
@@ -135,7 +320,18 @@ def _synthesize_manifest(
 
         raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         model_config = dict(raw.get("model") or {})
-        model_config.setdefault("_target_", MODEL_TARGET)
+        moe_markers = (
+            "time_route_boundary",
+            "checkpoint_sharing_policy",
+            "share_bridge",
+            "share_patch_embedding",
+        )
+        default_target = (
+            MOE_MODEL_TARGET
+            if any(marker in model_config for marker in moe_markers)
+            else MODEL_TARGET
+        )
+        model_config.setdefault("_target_", default_target)
         data = (raw.get("data") or {}).get("train") or {}
         horizon = int(data.get("action_horizon") or 32)
         camera_keys = model_config.get("vggt_camera_keys")
@@ -145,9 +341,13 @@ def _synthesize_manifest(
         if shape and len(shape) == 3:
             dataset_image_size = (int(shape[2]), int(shape[1]))
     else:
-        raise FastWAMBundledConfigError(
-            f"{root} has neither bundle.json, contract.json nor config.yaml"
-        )
+        checkpoint = _latest_checkpoint(root)
+        if checkpoint is None:
+            raise FastWAMBundledConfigError(
+                f"{root} has no bundle.json, contract.json, config.yaml or weights/step_*.pt"
+            )
+        model_config, camera_keys = _model_config_from_checkpoint(checkpoint)
+        horizon = 32
 
     if not camera_keys:
         raise FastWAMBundledConfigError("model config declares no vggt_camera_keys")
@@ -209,6 +409,7 @@ class FastWAMBundledConfig:
     gripper_indices: tuple[int, ...] = ()
     prompt_template: str = DEFAULT_PROMPT
     text_dir: Path | None = None
+    text_encoder_url: str | None = None
     checkpoint: Path | None = None
     seed: int | None = None
 
@@ -216,14 +417,66 @@ class FastWAMBundledConfig:
     def n_cameras(self) -> int:
         return len(self.camera_keys)
 
+    def _cache_roots(self) -> list[Path]:
+        """Directories searched for (and written with) UMT5 cache files.
+
+        The bundle's own ``text/`` comes first; ``FASTWAM_TEXT_CACHE_DIR`` adds a
+        writable location for bundles that live on read-only weight mounts.
+        """
+        roots: list[Path] = []
+        if self.text_dir is not None:
+            roots.append(self.text_dir)
+        override = os.environ.get(TEXT_CACHE_DIR_ENV, "").strip()
+        if override:
+            candidate = Path(override).expanduser()
+            if candidate not in roots:
+                roots.append(candidate)
+        return roots
+
+    def _text_cache_dir(self, *, create: bool = False) -> Path:
+        """Directory that holds (or should hold) the UMT5 cache files."""
+        roots = self._cache_roots()
+        target = roots[-1] if roots else self.root / "text"
+        if create:
+            target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def _lookup_text_cache(self, digest: str) -> Path | None:
+        # RoboDojo caches use `<sha>.pt`; LIBERO/RoboTwin caches use
+        # `<sha>.t5_len<L>.wan22ti2v5b.pt`. Accept both without guessing.
+        for root in self._cache_roots():
+            plain = root / f"{digest}.pt"
+            if plain.is_file():
+                return plain
+            matches = sorted(root.glob(f"{digest}.*.pt"))
+            if matches:
+                return matches[0]
+        return None
+
     def text_embedding_path(self, task: str) -> Path:
+        prompt = self.prompt_template.format(task=task)
+        digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+        cached = self._lookup_text_cache(digest)
+        if cached is not None:
+            return cached
+
+        if self.text_encoder_url:
+            # Miss: let the encoder node write the entry, then use it.
+            return _encode_via_service(self.text_encoder_url, prompt, self._text_cache_dir(create=True))
+
         if self.text_dir is None:
             raise FastWAMBundledConfigError(
-                "no text embedding cache found; language-conditioned inference needs "
-                "the UMT5 cache (data/text or text_embeddings)"
+                "no UMT5 text embedding cache found for this bundle, and no text encoder "
+                "configured to create one. Point policy.text_encoder_url (or "
+                f"{TEXT_ENCODER_URL_ENV}) at a fastwam_text_encoder node, or put the "
+                f"cache files in {self.root / 'text'}."
             )
-        prompt = self.prompt_template.format(task=task)
-        return self.text_dir / (hashlib.sha256(prompt.encode("utf-8")).hexdigest() + ".pt")
+        raise FastWAMBundledConfigError(
+            f"missing UMT5 embedding for instruction {task!r} (looked for {digest}.*.pt in "
+            f"{self.text_dir}) and no text encoder configured. Set policy.text_encoder_url "
+            f"(or {TEXT_ENCODER_URL_ENV}) to a fastwam_text_encoder node, or add the cache file."
+        )
 
 
 def load_bundle(
@@ -234,6 +487,7 @@ def load_bundle(
     action_horizon: int | None = None,
     image_size: Any = None,
     gripper_indices: Any = None,
+    text_encoder_url: str | None = None,
 ) -> FastWAMBundledConfig:
     """Load ``bundle.json`` or synthesize one from a FastWAM run directory."""
     root = Path(path).expanduser().resolve()
@@ -306,11 +560,20 @@ def load_bundle(
         raise FastWAMBundledConfigError("gripper_indices must be within [0, action_dim)")
 
     text_dir_raw = manifest.get("text_dir")
+    encoder_url = (
+        text_encoder_url
+        or manifest.get("text_encoder_url")
+        or os.environ.get(TEXT_ENCODER_URL_ENV)
+        or None
+    )
+    encoder_url = str(encoder_url).strip() if encoder_url else ""
+    if not encoder_url:
+        encoder_url = None
     text_dir = None
     if text_dir_raw:
         candidate = Path(str(text_dir_raw))
         text_dir = candidate if candidate.is_absolute() else root / candidate
-        if not text_dir.is_dir():
+        if not text_dir.is_dir() and not encoder_url:
             raise FastWAMBundledConfigError(f"text_dir does not exist: {text_dir}")
 
     checkpoint_raw = checkpoint if checkpoint is not None else manifest.get("checkpoint")
@@ -342,6 +605,7 @@ def load_bundle(
         gripper_indices=gripper_tuple,
         prompt_template=str(manifest.get("prompt_template", DEFAULT_PROMPT)),
         text_dir=text_dir,
+        text_encoder_url=encoder_url,
         checkpoint=checkpoint_path,
         seed=seed,
     )
@@ -350,6 +614,9 @@ def load_bundle(
 __all__ = [
     "BUNDLE_SCHEMA_VERSION",
     "DEFAULT_PROMPT",
+    "TEXT_CACHE_DIR_ENV",
+    "TEXT_ENCODER_URL_ENV",
+    "TEXT_ENCODER_WAIT_ENV",
     "FastWAMBundledConfig",
     "FastWAMBundledConfigError",
     "load_bundle",

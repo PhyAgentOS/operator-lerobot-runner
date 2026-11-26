@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import numpy as np
@@ -92,11 +96,119 @@ def test_load_bundle_rejects_missing_field(tmp_path: Path) -> None:
 def test_text_embedding_path_uses_prompt_hash(tmp_path: Path) -> None:
     root = _write_bundle(tmp_path)
     cfg = load_bundle(root)
-    path = cfg.text_embedding_path("Stack the bowls")
-    import hashlib
-
     prompt = bundle_mod.DEFAULT_PROMPT.format(task="Stack the bowls")
-    assert path.name == hashlib.sha256(prompt.encode()).hexdigest() + ".pt"
+    expected = root / "text" / (hashlib.sha256(prompt.encode()).hexdigest() + ".t5_len128.wan22ti2v5b.pt")
+    expected.write_bytes(b"stub")
+    assert cfg.text_embedding_path("Stack the bowls") == expected
+
+
+class _EncoderStub:
+    """Minimal stand-in for a fastwam_text_encoder node."""
+
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+        stub = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args) -> None:  # noqa: A003
+                pass
+
+            def do_POST(self) -> None:  # noqa: N802
+                length = int(self.headers.get("Content-Length") or 0)
+                payload = json.loads(self.rfile.read(length) or b"{}")
+                prompt = payload["prompts"][0]
+                stub.prompts.append(prompt)
+                digest = hashlib.sha256(prompt.encode()).hexdigest()
+                path = Path(payload["cache_dir"]) / f"{digest}.t5_len128.wan22ti2v5b.pt"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"stub")
+                body = json.dumps(
+                    {"results": [{"prompt": prompt, "path": str(path), "written": True}]}
+                ).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_text_encoder_service_is_used_on_cache_miss(tmp_path: Path) -> None:
+    root = _write_bundle(tmp_path)
+    stub = _EncoderStub()
+    try:
+        cfg = load_bundle(root, text_encoder_url=stub.url)
+        path = cfg.text_embedding_path("Stack the bowls")
+        assert path.is_file()
+        assert stub.prompts == [bundle_mod.DEFAULT_PROMPT.format(task="Stack the bowls")]
+    finally:
+        stub.close()
+
+
+def test_text_encoder_url_can_come_from_env(tmp_path: Path, monkeypatch) -> None:
+    root = _write_bundle(tmp_path)
+    monkeypatch.setenv(bundle_mod.TEXT_ENCODER_URL_ENV, "http://127.0.0.1:19999")
+    cfg = load_bundle(root)
+    assert cfg.text_encoder_url == "http://127.0.0.1:19999"
+
+
+def test_missing_text_without_encoder_is_actionable(tmp_path: Path) -> None:
+    root = _write_bundle(tmp_path)
+    cfg = load_bundle(root)
+    with pytest.raises(FastWAMBundledConfigError, match="text_encoder_url"):
+        cfg.text_embedding_path("Stack the bowls")
+
+
+def test_text_encoder_failure_is_reported(tmp_path: Path, monkeypatch) -> None:
+    root = _write_bundle(tmp_path)
+    monkeypatch.setenv(bundle_mod.TEXT_ENCODER_WAIT_ENV, "1")
+    cfg = load_bundle(root, text_encoder_url="http://127.0.0.1:1")
+    with pytest.raises(FastWAMBundledConfigError, match="not reachable within"):
+        cfg.text_embedding_path("Stack the bowls")
+
+
+def test_text_encoder_http_error_is_not_retried(tmp_path: Path, monkeypatch) -> None:
+    """A service that answers is up; retrying a 4xx only delays the failure."""
+    root = _write_bundle(tmp_path)
+    monkeypatch.setenv(bundle_mod.TEXT_ENCODER_WAIT_ENV, "60")
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args) -> None:  # noqa: A003
+            pass
+
+        def do_POST(self) -> None:  # noqa: N802
+            body = json.dumps({"error": "boom"}).encode()
+            self.send_response(500)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        cfg = load_bundle(root, text_encoder_url=f"http://127.0.0.1:{server.server_port}")
+        started = time.monotonic()
+        with pytest.raises(FastWAMBundledConfigError, match="rejected the request"):
+            cfg.text_embedding_path("Stack the bowls")
+        assert time.monotonic() - started < 20, "an answering service must not be retried"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_text_encoder_wait_env_is_validated(tmp_path: Path, monkeypatch) -> None:
+    root = _write_bundle(tmp_path)
+    monkeypatch.setenv(bundle_mod.TEXT_ENCODER_WAIT_ENV, "soon")
+    cfg = load_bundle(root, text_encoder_url="http://127.0.0.1:1")
+    with pytest.raises(FastWAMBundledConfigError, match="number of seconds"):
+        cfg.text_embedding_path("Stack the bowls")
 
 
 def test_adapter_chunks_and_resizes(tmp_path: Path) -> None:
@@ -224,3 +336,50 @@ def test_adapter_validates_dimensions(tmp_path: Path) -> None:
         adapter.validate_io_dimensions(8, 14)
     with pytest.raises(ValueError, match="action dimension"):
         adapter.validate_io_dimensions(14, 7)
+
+
+def test_model_config_from_checkpoint_derives_graph(tmp_path, monkeypatch):
+    """A bare checkpoint (no contract/config.yaml) is enough to describe the graph."""
+    import torch
+
+    def fake_tensor(*shape):
+        return torch.zeros(*shape)
+
+    payload = {
+        "format": "action_vggt_moe_recon_fastwam",
+        "version": 3,
+        "metadata": {
+            "bridge_config": {
+                "projection_mode": "vggt_to_fastwam",
+                "projection_sharing": "independent",
+                "fastwam_num_heads": 24,
+                "vggt_width": 1024,
+                "vggt_num_heads": 16,
+            },
+            "vggt_camera_keys": ["image", "wrist_image"],
+            "layer_pairs": [[0, 3]],
+            "time_route_boundary": 0.5,
+            "sharing": {"share_bridge": False},
+            "reconstruction_loss_config": {"backend": "official"},
+        },
+        "action_expert": {
+            "blocks.0.self_attn.q.weight": fake_tensor(48, 16),
+            "blocks.0.ffn.0.weight": fake_tensor(32, 16),
+            "time_embedding.0.weight": fake_tensor(16, 8),
+            "text_embedding.0.weight": fake_tensor(16, 4096),
+            "head.weight": fake_tensor(7, 16),
+        },
+        "proprio_encoder": {"weight": fake_tensor(16, 8)},
+    }
+    monkeypatch.setattr(torch, "load", lambda *args, **kwargs: payload)
+
+    config, cameras = bundle_mod._model_config_from_checkpoint(tmp_path / "step_000001.pt")
+    assert cameras == ["image", "wrist_image"]
+    assert config["_target_"] == bundle_mod.MOE_MODEL_TARGET
+    assert config["action_dit_config"]["action_dim"] == 7
+    assert config["action_dit_config"]["hidden_dim"] == 16
+    assert config["action_dit_config"]["attn_head_dim"] == 2
+    assert config["action_dit_config"]["text_dim"] == 4096
+    assert config["proprio_dim"] == 8
+    assert config["time_route_boundary"] == 0.5
+    assert config["share_bridge"] is False
